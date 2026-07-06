@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN не задан! Укажите токен в переменной окружения.")
-        sys.exit(1)
+    BOT_TOKEN = "6702099427:AAFzH_TnVZEqStL7EuFL9dI9iu5fVNJ3gOM"
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
