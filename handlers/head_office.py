@@ -6,6 +6,7 @@ from filters import IsHeadOffice
 from keyboards import (
     head_office_menu, objects_inline, object_actions_inline,
     confirm_keyboard, cancel_keyboard, back_keyboard,
+    access_management_kb,
 )
 from database import (
     get_object, get_objects, create_object, delete_object,
@@ -373,12 +374,21 @@ async def report_end_date(message: Message, state: FSMContext):
         await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
 
 
-# --- View access codes ---
-@router.message(F.text == "🔑 Коды доступа")
-async def show_access_codes(message: Message):
+# --- Access management ---
+@router.message(F.text == "🔐 Управление доступом")
+async def access_management(message: Message):
+    await message.answer(
+        "🔐 **Управление доступом**\n\nВыберите действие:",
+        reply_markup=access_management_kb(),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data == "view_codes")
+async def show_access_codes(callback: CallbackQuery):
     codes = await get_all_codes_with_users()
     if not codes:
-        await message.answer("❌ Нет созданных кодов доступа.")
+        await callback.message.edit_text("❌ Нет созданных кодов доступа.", reply_markup=access_management_kb())
         return
 
     lines = ["🔑 **Все коды доступа:**\n"]
@@ -389,23 +399,21 @@ async def show_access_codes(message: Message):
         names = c["user_names"] if c["user_names"] else "—"
         lines.append(f"• {names} — `{c['code']}` ({role_label}{obj})")
 
-    await message.answer("\n".join(lines), parse_mode="Markdown")
+    await callback.message.edit_text("\n".join(lines), reply_markup=access_management_kb(), parse_mode="Markdown")
 
 
-# --- Create HQ code ---
-@router.message(F.text == "👤 Создать код ГО")
-async def create_hq_code_start(message: Message, state: FSMContext):
-    await state.set_state(AddHQUser.waiting_for_name)
-    await message.answer(
-        "👤 **Создание кода головного офиса**\n\n"
-        "Введите **имя** сотрудника ГО:",
-        reply_markup=cancel_keyboard(),
+@router.callback_query(F.data == "create_code")
+async def create_code_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "👤 **Создание кода доступа**\n\n"
+        "Введите **имя** сотрудника:",
         parse_mode="Markdown",
     )
+    await state.set_state(AddHQUser.waiting_for_name)
 
 
 @router.message(AddHQUser.waiting_for_name)
-async def create_hq_code_name(message: Message, state: FSMContext):
+async def create_code_name(message: Message, state: FSMContext):
     name = message.text.strip()
     if len(name) < 2 or len(name) > 100:
         await message.answer("❌ Имя должно быть от 2 до 100 символов. Попробуйте снова:")
@@ -414,14 +422,14 @@ async def create_hq_code_name(message: Message, state: FSMContext):
     await state.set_state(AddHQUser.waiting_for_code)
     await message.answer(
         f"Имя: {name}\n\n"
-        "Введите **код доступа** для этого сотрудника ГО:",
+        "Введите **код доступа** для этого сотрудника:",
         reply_markup=back_keyboard(),
         parse_mode="Markdown",
     )
 
 
 @router.message(AddHQUser.waiting_for_code)
-async def create_hq_code_final(message: Message, state: FSMContext):
+async def create_code_final(message: Message, state: FSMContext):
     code = message.text.strip()
     if await code_exists(code):
         await message.answer("❌ Этот код уже используется. Придумайте другой:")
@@ -434,7 +442,7 @@ async def create_hq_code_final(message: Message, state: FSMContext):
     await create_access_code(code, "head_office", None)
     await state.clear()
     await message.answer(
-        f"✅ Код головного офиса создан!\n\n"
+        f"✅ Код доступа создан!\n\n"
         f"Имя: {hq_name}\n"
         f"Код: `{code}`\n\n"
         f"Этот код предоставляет полный доступ к управлению.",

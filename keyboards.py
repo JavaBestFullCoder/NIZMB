@@ -8,8 +8,7 @@ def head_office_menu() -> ReplyKeyboardMarkup:
     builder.row(KeyboardButton(text="📋 Управление объектами"))
     builder.row(KeyboardButton(text="📊 Отчеты за период"), KeyboardButton(text="💰 Мой счет"))
     builder.row(KeyboardButton(text="💸 Расход"), KeyboardButton(text="👔 Расход Директора"))
-    builder.row(KeyboardButton(text="📦 Оплата поставщика"), KeyboardButton(text="👤 Создать код ГО"))
-    builder.row(KeyboardButton(text="🔑 Коды доступа"))
+    builder.row(KeyboardButton(text="📦 Оплата поставщика"), KeyboardButton(text="🔐 Управление доступом"))
     return builder.as_markup(resize_keyboard=True)
 
 
@@ -80,4 +79,13 @@ def confirm_keyboard(action: str, data: str) -> InlineKeyboardMarkup:
 def date_back_keyboard(callback: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="🔙 Назад", callback_data=callback)
+    return builder.as_markup()
+
+
+def access_management_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👤 Создать код доступа", callback_data="create_code")
+    builder.button(text="🔑 Просмотр кодов", callback_data="view_codes")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(1)
     return builder.as_markup()

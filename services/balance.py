@@ -1,4 +1,4 @@
-from database import get_object_balance, get_hq_balance, get_daily_summary, get_hq_transactions
+from database import get_object_balance, get_hq_balance, get_daily_summary, get_hq_transactions, get_objects
 from utils import today_str, format_amount, format_date
 
 
@@ -14,7 +14,7 @@ async def get_hq_balance_text() -> str:
     balance = await get_hq_balance()
     today = today_str()
     lines = [
-        f"💰 **Баланс головного офиса**\n",
+        f"💰 **Баланс головного офиса**",
         f"Текущий остаток: {format_amount(balance)} сум\n",
     ]
     # Show recent transfers (last 7 days)
@@ -24,16 +24,29 @@ async def get_hq_balance_text() -> str:
     txns = await get_hq_transactions(week_ago, today)
     transfers = [t for t in txns if t["type"] == "transfer_in"]
     if transfers:
-        lines.append("📥 **Последние переводы из объектов:**")
+        lines.append("📥 **Последние переводы:**")
         for t in transfers[-5:]:
             source = t.get("source_object_name", "—")
             lines.append(f"  • {source}: +{format_amount(t['amount'])} сум ({format_date(t['transaction_date'])})")
-        lines.append("")
-    expenses = [t for t in txns if t["type"] == "expense"]
+    expenses = [t for t in txns if t["type"] in ("expense", "director_expense", "supplier_payment")]
     if expenses:
         lines.append("📤 **Последние расходы:**")
         for t in expenses[-5:]:
             lines.append(f"  • {format_amount(t['amount'])} сум — {t.get('reason', '—')} ({format_date(t['transaction_date'])})")
+
+    # All objects balances
+    objects = await get_objects()
+    if objects:
+        lines.append("")
+        lines.append("🏢 **Балансы объектов:**")
+        total_obj = 0.0
+        for obj in objects:
+            obj_bal = await get_object_balance(obj["id"])
+            total_obj += obj_bal
+            lines.append(f"  • {obj['name']}: {format_amount(obj_bal)} сум")
+        lines.append("")
+        lines.append(f"📊 **Общий остаток (ГО + объекты):** {format_amount(balance + total_obj)} сум")
+
     return "\n".join(lines)
 
 
