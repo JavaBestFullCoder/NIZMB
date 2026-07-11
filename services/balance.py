@@ -12,27 +12,10 @@ async def get_object_balance_text(object_id: int, object_name: str) -> str:
 
 async def get_hq_balance_text() -> str:
     balance = await get_hq_balance()
-    today = today_str()
     lines = [
         f"💰 **Баланс головного офиса**",
         f"Текущий остаток: {format_amount(balance)} сум\n",
     ]
-    # Show recent transfers (last 7 days)
-    from datetime import datetime, timedelta
-    from config import TZ
-    week_ago = (datetime.now(TZ) - timedelta(days=7)).strftime("%Y-%m-%d")
-    txns = await get_hq_transactions(week_ago, today)
-    transfers = [t for t in txns if t["type"] == "transfer_in"]
-    if transfers:
-        lines.append("📥 **Последние переводы:**")
-        for t in transfers[-5:]:
-            source = t.get("source_object_name", "—")
-            lines.append(f"  • {source}: +{format_amount(t['amount'])} сум ({format_date(t['transaction_date'])})")
-    expenses = [t for t in txns if t["type"] in ("expense", "director_expense", "supplier_payment")]
-    if expenses:
-        lines.append("📤 **Последние расходы:**")
-        for t in expenses[-5:]:
-            lines.append(f"  • {format_amount(t['amount'])} сум — {t.get('reason', '—')} ({format_date(t['transaction_date'])})")
 
     # All objects balances
     objects = await get_objects()

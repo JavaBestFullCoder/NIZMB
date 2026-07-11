@@ -228,69 +228,62 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     _style_header(ws, 3, num_cols)
 
     BLUE_FONT = Font(color="0000FF", bold=True)
+    GREEN_FONT = Font(color="008000")
     RED_FONT = Font(color="FF0000")
 
-    def _write_metric(ws, row, value, is_expense=False, is_balance=False):
+    def _write_metric(ws, row, value, is_expense=False, is_balance=False, green=False):
         if is_expense:
             cell = _amount_cell(ws, row, col, -value)
             cell.font = RED_FONT
+        elif green:
+            cell = _amount_cell(ws, row, col, value)
+            cell.font = GREEN_FONT
         else:
             cell = _amount_cell(ws, row, col, value)
             if is_balance:
                 cell.font = BLUE_FONT
 
-    summary_defs = [
-        ("Всего приход", "income", False),
-        ("Всего расход", "expense", True),
-        ("Всего оплат поставщика", "supplier_payment", True),
-        ("Всего расход директора", "director_expense", True),
-        ("Всего переводов в офис", "transfer_out", True),
+    indicator_defs = [
+        ("Всего приход", "income"),
+        ("Всего расход", "expense"),
+        ("Всего оплат поставщика", "supplier_payment"),
+        ("Всего расход директора", "director_expense"),
+        ("Всего переводов в офис", "transfer_out"),
     ]
 
     r = 4
-    for label, key, is_expense in summary_defs:
-        ws.cell(row=r, column=1, value=label).border = THIN_BORDER
 
-        # Total column = hq + all objects
-        total = hq_metrics[key] + sum(ed["metrics"][key] for ed in entity_data)
-        col = 2
-        _write_metric(ws, r, total, is_expense)
-
-        # HQ column
-        col = 3
-        _write_metric(ws, r, hq_metrics[key], is_expense)
-
-        # Object columns
-        col = 4
-        for ed in entity_data:
-            _write_metric(ws, r, ed["metrics"][key], is_expense)
-            col += 1
-        r += 1
-
-    # Остаток на начало периода (blue)
+    # Остаток на начало периода (blue, first row)
     ws.cell(row=r, column=1, value="Остаток на начало периода").border = THIN_BORDER
     ws.cell(row=r, column=1).font = BLUE_FONT
-
     total_opening = hq_opening + sum(ed["opening"] for ed in entity_data)
-    col = 2
-    _write_metric(ws, r, total_opening, is_balance=True)
-    col = 3
-    _write_metric(ws, r, hq_opening, is_balance=True)
+    col = 2; _write_metric(ws, r, total_opening, is_balance=True)
+    col = 3; _write_metric(ws, r, hq_opening, is_balance=True)
     col = 4
     for ed in entity_data:
         _write_metric(ws, r, ed["opening"], is_balance=True)
         col += 1
     r += 1
 
-    # Остаток на конец периода (blue)
+    # Indicator rows
+    for label, key in indicator_defs:
+        is_expense = key != "income"
+        ws.cell(row=r, column=1, value=label).border = THIN_BORDER
+        total = hq_metrics[key] + sum(ed["metrics"][key] for ed in entity_data)
+        col = 2; _write_metric(ws, r, total, is_expense, green=(key == "income"))
+        col = 3; _write_metric(ws, r, hq_metrics[key], is_expense, green=(key == "income"))
+        col = 4
+        for ed in entity_data:
+            _write_metric(ws, r, ed["metrics"][key], is_expense, green=(key == "income"))
+            col += 1
+        r += 1
+
+    # Остаток на конец периода (blue, last row)
     ws.cell(row=r, column=1, value="Остаток на конец периода").border = THIN_BORDER
     ws.cell(row=r, column=1).font = BLUE_FONT
-
     total_closing = hq_closing + sum(ed["closing"] for ed in entity_data)
-    col = 2
-    _write_metric(ws, r, total_closing, is_balance=True)
-    col = 3
-    _write_metric(ws, r, hq_closing, is_balance=True)
+    col = 2; _write_metric(ws, r, total_closing, is_balance=True)
+    col = 3; _write_metric(ws, r, hq_closing, is_balance=True)
     col = 4
     for ed in entity_data:
         _write_metric(ws, r, ed["closing"], is_balance=True)
@@ -387,15 +380,9 @@ async def generate_object_report_text(object_id: int, object_name: str, start_da
     lines = [f"📅 {format_date(start_date)} — {format_date(end_date)}"]
     lines.append(f"🔵 Остаток на начало: {format_amount(opening)} сум")
     lines.append(f"🟢 Всего приход: +{format_amount(m['income'])} сум")
-
-    if m["expense"]:
-        lines.append(f"🔴 Всего расход: -{format_amount(m['expense'])} сум")
-    if m["supplier_payment"]:
-        lines.append(f"📦 Оплата поставщика: -{format_amount(m['supplier_payment'])} сум")
-    if m["director_expense"]:
-        lines.append(f"👔 Расход директора: -{format_amount(m['director_expense'])} сум")
-    if m["transfer_out"]:
-        lines.append(f"💸 Перевод в офис: -{format_amount(m['transfer_out'])} сум")
-
+    lines.append(f"🔴 Всего расход: -{format_amount(m['expense'])} сум")
+    lines.append(f"📦 Оплата поставщика: -{format_amount(m['supplier_payment'])} сум")
+    lines.append(f"👔 Расход директора: -{format_amount(m['director_expense'])} сум")
+    lines.append(f"💸 Перевод в офис: -{format_amount(m['transfer_out'])} сум")
     lines.append(f"🏁 Остаток на конец: {format_amount(closing)} сум")
     return "\n".join(lines)
