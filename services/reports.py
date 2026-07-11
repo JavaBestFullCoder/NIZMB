@@ -268,13 +268,18 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     # Indicator rows
     for label, key in indicator_defs:
         is_expense = key != "income"
+        hq_val = hq_metrics[key]
+        if key == "income":
+            hq_val += hq_metrics["transfer_in"]
+        objects_val = sum(ed["metrics"][key] for ed in entity_data)
+        total = hq_val + objects_val
+        is_green = key == "income"
         ws.cell(row=r, column=1, value=label).border = THIN_BORDER
-        total = hq_metrics[key] + sum(ed["metrics"][key] for ed in entity_data)
-        col = 2; _write_metric(ws, r, total, is_expense, green=(key == "income"))
-        col = 3; _write_metric(ws, r, hq_metrics[key], is_expense, green=(key == "income"))
+        col = 2; _write_metric(ws, r, total, is_expense, green=is_green)
+        col = 3; _write_metric(ws, r, hq_val, is_expense, green=is_green)
         col = 4
         for ed in entity_data:
-            _write_metric(ws, r, ed["metrics"][key], is_expense, green=(key == "income"))
+            _write_metric(ws, r, ed["metrics"][key], is_expense, green=is_green)
             col += 1
         r += 1
 
