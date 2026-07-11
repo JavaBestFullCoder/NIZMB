@@ -268,17 +268,28 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     # Indicator rows
     for label, key in indicator_defs:
         is_expense = key != "income"
-        hq_val = hq_metrics[key]
-        objects_val = sum(ed["metrics"][key] for ed in entity_data)
-        total = hq_val + objects_val
-        is_green = key == "income"
         ws.cell(row=r, column=1, value=label).border = THIN_BORDER
-        col = 2; _write_metric(ws, r, total, is_expense, green=is_green)
-        col = 3; _write_metric(ws, r, hq_val, is_expense, green=is_green)
-        col = 4
-        for ed in entity_data:
-            _write_metric(ws, r, ed["metrics"][key], is_expense, green=is_green)
-            col += 1
+
+        if key == "transfer_out":
+            # HQ shows transfer_in (green); objects show transfer_out (red)
+            total_val = hq_metrics["transfer_in"]
+            col = 2; _write_metric(ws, r, total_val, is_expense=False, green=True)
+            col = 3; _write_metric(ws, r, hq_metrics["transfer_in"], is_expense=False, green=True)
+            col = 4
+            for ed in entity_data:
+                _write_metric(ws, r, ed["metrics"]["transfer_out"], is_expense=True)
+                col += 1
+        else:
+            hq_val = hq_metrics[key]
+            objects_val = sum(ed["metrics"][key] for ed in entity_data)
+            total = hq_val + objects_val
+            is_green = key == "income"
+            col = 2; _write_metric(ws, r, total, is_expense, green=is_green)
+            col = 3; _write_metric(ws, r, hq_val, is_expense, green=is_green)
+            col = 4
+            for ed in entity_data:
+                _write_metric(ws, r, ed["metrics"][key], is_expense, green=is_green)
+                col += 1
         r += 1
 
     # Остаток на конец периода (blue, last row)
