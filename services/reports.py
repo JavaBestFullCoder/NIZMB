@@ -97,6 +97,37 @@ def _balance_as_of(object_id: int, transactions: list[dict], date_str: str, open
     return bal
 
 
+def _extract_metrics(txns: list[dict]) -> dict:
+    income = 0.0
+    expense = 0.0
+    supplier_payment = 0.0
+    director_expense = 0.0
+    transfer_out = 0.0
+    transfer_in = 0.0
+    for t in txns:
+        type_ = t["type"]
+        if type_ == "income":
+            income += t["amount"]
+        elif type_ == "expense":
+            expense += t["amount"]
+        elif type_ == "supplier_payment":
+            supplier_payment += t["amount"]
+        elif type_ == "director_expense":
+            director_expense += t["amount"]
+        elif type_ == "transfer_out":
+            transfer_out += t["amount"]
+        elif type_ == "transfer_in":
+            transfer_in += t["amount"]
+    return {
+        "income": income,
+        "expense": expense,
+        "supplier_payment": supplier_payment,
+        "director_expense": director_expense,
+        "transfer_out": transfer_out,
+        "transfer_in": transfer_in,
+    }
+
+
 # --- General report: one sheet per object ---
 
 async def generate_all_objects_report(start_date: str, end_date: str) -> str:
@@ -108,15 +139,22 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     wb.remove(wb.active)
     objects = await get_objects()
     headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
-    total_income = 0.0
-    total_expense = 0.0
-    total_transfer = 0.0
+
+    entity_data = []
 
     for obj in objects:
         ws = wb.create_sheet(title=obj["name"][:31])
         txns = await get_object_transactions(obj["id"], start_date, end_date)
         opening = await get_object_balance_before(obj["id"], start_date)
         closing = _balance_as_of(obj["id"], txns, end_date, opening)
+        metrics = _extract_metrics(txns)
+
+        entity_data.append({
+            "name": obj["name"],
+            "metrics": metrics,
+            "opening": opening,
+            "closing": closing,
+        })
 
         title = f"«{obj['name']}» {format_date(start_date)} — {format_date(end_date)}"
         _add_title(ws, title, len(headers))
@@ -130,9 +168,6 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         _amount_cell(ws, last_row, 2, closing)
 
         _auto_width(ws, len(headers))
-        total_income += sum(t["amount"] for t in txns if t["type"] == "income")
-        total_expense += sum(t["amount"] for t in txns if t["type"] == "expense")
-        total_transfer += sum(t["amount"] for t in txns if t["type"] == "transfer_out")
 
     # HQ sheet
     hq_headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
@@ -145,6 +180,8 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
             hq_closing += t["amount"]
         elif t["type"] in EXPENSE_TYPES:
             hq_closing -= t["amount"]
+
+    hq_metrics = _extract_metrics(hq_txns)
 
     _add_title(ws_hq, f"Головной офис {format_date(start_date)} — {format_date(end_date)}", len(hq_headers))
     ws_hq.cell(row=3, column=1, value="Остаток на начало:").font = Font(bold=True)
@@ -175,19 +212,91 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     _auto_width(ws_hq, len(hq_headers))
 
     # Summary sheet
+    num_cols = 2 + 1 + len(objects)
     ws = wb.create_sheet(title="Сводка")
-    _add_title(ws, f"Сводка {format_date(start_date)} — {format_date(end_date)}", 2)
-    ws.cell(row=3, column=1, value="Показатель").font = Font(bold=True)
-    ws.cell(row=3, column=2, value="Сумма").font = Font(bold=True)
-    _style_header(ws, 3, 2)
-    ws.cell(row=4, column=1, value="Всего приход").border = THIN_BORDER
-    _amount_cell(ws, 4, 2, total_income)
-    ws.cell(row=5, column=1, value="Всего расход").border = THIN_BORDER
-    _amount_cell(ws, 5, 2, total_expense)
-    ws.cell(row=6, column=1, value="Всего переводов в офис").border = THIN_BORDER
-    _amount_cell(ws, 6, 2, total_transfer)
+    _add_title(ws, f"Сводка {format_date(start_date)} — {format_date(end_date)}", num_cols)
 
-    _auto_width(ws, 2)
+    # Header row
+    ws.cell(row=3, column=1, value="Показатель")
+    ws.cell(row=3, column=2, value="Всего")
+    col = 3
+    ws.cell(row=3, column=col, value="Головной офис")
+    col += 1
+    for ed in entity_data:
+        ws.cell(row=3, column=col, value=ed["name"])
+        col += 1
+    _style_header(ws, 3, num_cols)
+
+    BLUE_FONT = Font(color="0000FF", bold=True)
+    RED_FONT = Font(color="FF0000")
+
+    def _write_metric(ws, row, value, is_expense=False, is_balance=False):
+        if is_expense:
+            cell = _amount_cell(ws, row, col, -value)
+            cell.font = RED_FONT
+        else:
+            cell = _amount_cell(ws, row, col, value)
+            if is_balance:
+                cell.font = BLUE_FONT
+
+    summary_defs = [
+        ("Всего приход", "income", False),
+        ("Всего расход", "expense", True),
+        ("Всего оплат поставщика", "supplier_payment", True),
+        ("Всего расход директора", "director_expense", True),
+        ("Всего переводов в офис", "transfer_out", True),
+    ]
+
+    r = 4
+    for label, key, is_expense in summary_defs:
+        ws.cell(row=r, column=1, value=label).border = THIN_BORDER
+
+        # Total column = hq + all objects
+        total = hq_metrics[key] + sum(ed["metrics"][key] for ed in entity_data)
+        col = 2
+        _write_metric(ws, r, total, is_expense)
+
+        # HQ column
+        col = 3
+        _write_metric(ws, r, hq_metrics[key], is_expense)
+
+        # Object columns
+        col = 4
+        for ed in entity_data:
+            _write_metric(ws, r, ed["metrics"][key], is_expense)
+            col += 1
+        r += 1
+
+    # Остаток на начало периода (blue)
+    ws.cell(row=r, column=1, value="Остаток на начало периода").border = THIN_BORDER
+    ws.cell(row=r, column=1).font = BLUE_FONT
+
+    total_opening = hq_opening + sum(ed["opening"] for ed in entity_data)
+    col = 2
+    _write_metric(ws, r, total_opening, is_balance=True)
+    col = 3
+    _write_metric(ws, r, hq_opening, is_balance=True)
+    col = 4
+    for ed in entity_data:
+        _write_metric(ws, r, ed["opening"], is_balance=True)
+        col += 1
+    r += 1
+
+    # Остаток на конец периода (blue)
+    ws.cell(row=r, column=1, value="Остаток на конец периода").border = THIN_BORDER
+    ws.cell(row=r, column=1).font = BLUE_FONT
+
+    total_closing = hq_closing + sum(ed["closing"] for ed in entity_data)
+    col = 2
+    _write_metric(ws, r, total_closing, is_balance=True)
+    col = 3
+    _write_metric(ws, r, hq_closing, is_balance=True)
+    col = 4
+    for ed in entity_data:
+        _write_metric(ws, r, ed["closing"], is_balance=True)
+        col += 1
+
+    _auto_width(ws, num_cols)
     wb.save(filepath)
     return filepath
 
