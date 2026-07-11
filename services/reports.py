@@ -273,8 +273,8 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         if key == "transfer_out":
             hq_val = hq_metrics["transfer_in"]
             objects_val = sum(ed["metrics"]["transfer_out"] for ed in entity_data)
-            total = hq_val + objects_val
-            col = 2; _write_metric(ws, r, total, is_expense=False, green=True)
+            signed_total = hq_val - objects_val
+            col = 2; _write_metric(ws, r, abs(signed_total), is_expense=(signed_total < 0), green=(signed_total > 0))
             col = 3; _write_metric(ws, r, hq_val, is_expense=False, green=True)
             col = 4
             for ed in entity_data:
