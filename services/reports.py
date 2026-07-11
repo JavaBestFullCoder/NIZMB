@@ -382,13 +382,20 @@ async def generate_object_report_text(object_id: int, object_name: str, start_da
     txns = await get_object_transactions(object_id, start_date, end_date)
     opening = await get_object_balance_before(object_id, start_date)
     closing = _balance_as_of(object_id, txns, end_date, opening)
-    total_income = sum(t["amount"] for t in txns if t["type"] == "income")
-    total_expense = sum(t["amount"] for t in txns if t["type"] in ("expense", "transfer_out"))
+    m = _extract_metrics(txns)
 
-    return (
-        f"📅 {format_date(start_date)} — {format_date(end_date)}\n"
-        f"🔵 Остаток на начало: {format_amount(opening)} сум\n"
-        f"🟢 Всего приход: +{format_amount(total_income)} сум\n"
-        f"🔴 Всего расход: -{format_amount(total_expense)} сум\n"
-        f"🏁 Остаток на конец: {format_amount(closing)} сум"
-    )
+    lines = [f"📅 {format_date(start_date)} — {format_date(end_date)}"]
+    lines.append(f"🔵 Остаток на начало: {format_amount(opening)} сум")
+    lines.append(f"🟢 Всего приход: +{format_amount(m['income'])} сум")
+
+    if m["expense"]:
+        lines.append(f"🔴 Всего расход: -{format_amount(m['expense'])} сум")
+    if m["supplier_payment"]:
+        lines.append(f"📦 Оплата поставщика: -{format_amount(m['supplier_payment'])} сум")
+    if m["director_expense"]:
+        lines.append(f"👔 Расход директора: -{format_amount(m['director_expense'])} сум")
+    if m["transfer_out"]:
+        lines.append(f"💸 Перевод в офис: -{format_amount(m['transfer_out'])} сум")
+
+    lines.append(f"🏁 Остаток на конец: {format_amount(closing)} сум")
+    return "\n".join(lines)
