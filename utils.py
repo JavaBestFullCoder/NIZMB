@@ -42,8 +42,8 @@ def format_date(date_str: str) -> str:
 
 def format_amount(amount: float) -> str:
     if amount >= 0:
-        return f"{amount:,.2f}"
-    return f"-{abs(amount):,.2f}"
+        return f"{amount:.2f}"
+    return f"-{abs(amount):.2f}"
 
 
 def date_range_str(start: str, end: str) -> str:

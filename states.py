@@ -21,6 +21,7 @@ class AddExpense(StatesGroup):
     waiting_for_date = State()
 
 class Transfer(StatesGroup):
+    waiting_for_amount = State()
     confirming = State()
 
 class ReportPeriod(StatesGroup):

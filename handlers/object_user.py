@@ -8,7 +8,7 @@ from database import (
     get_user_by_telegram, get_object,
     create_transaction, get_object_balance, link_transfers,
 )
-from states import AddIncome, AddExpense, ReportPeriod
+from states import AddIncome, AddExpense, Transfer, ReportPeriod
 from services.balance import get_object_balance_text, get_daily_summary_text
 from services.reports import generate_object_report_text
 from utils import parse_amount, parse_date, format_amount, format_date, today_str
@@ -195,11 +195,33 @@ async def transfer_start(message: Message, state: FSMContext):
         await message.answer(f"❌ На счету объекта «{obj['name']}» нет средств. Текущий баланс: {format_amount(balance)} сум")
         return
 
-    await state.update_data(transfer_amount=balance, transfer_obj_id=obj["id"], transfer_obj_name=obj["name"])
+    await state.update_data(transfer_obj_id=obj["id"], transfer_obj_name=obj["name"], max_amount=balance)
+    await state.set_state(Transfer.waiting_for_amount)
     await message.answer(
         f"🔄 **Перевод в головной офис**\n\n"
         f"Объект: «{obj['name']}»\n"
-        f"Сумма перевода: {format_amount(balance)} сум\n\n"
+        f"Максимальная сумма: {format_amount(balance)} сум\n\n"
+        f"Введите сумму перевода:",
+        reply_markup=cancel_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(Transfer.waiting_for_amount)
+async def transfer_amount(message: Message, state: FSMContext):
+    amount = parse_amount(message.text)
+    if amount is None:
+        await message.answer("❌ Неверная сумма. Введите число больше 0:")
+        return
+    data = await state.get_data()
+    if amount > data["max_amount"]:
+        await message.answer(f"❌ Сумма превышает баланс ({format_amount(data['max_amount'])} сум). Введите меньшую сумму:")
+        return
+    await state.update_data(transfer_amount=amount)
+    await message.answer(
+        f"🔄 **Подтверждение перевода**\n\n"
+        f"Объект: «{data['transfer_obj_name']}»\n"
+        f"Сумма: {format_amount(amount)} сум\n\n"
         f"Подтвердите перевод:",
         reply_markup=(await _confirm_transfer_kb()),
         parse_mode="Markdown",

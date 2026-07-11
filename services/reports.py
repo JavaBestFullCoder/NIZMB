@@ -37,6 +37,13 @@ def _style_header(ws, row: int, cols: int):
         cell.border = THIN_BORDER
 
 
+def _amount_cell(ws, row: int, col: int, value: float):
+    cell = ws.cell(row=row, column=col, value=value)
+    cell.number_format = '#,##0.00'
+    cell.border = THIN_BORDER
+    return cell
+
+
 def _auto_width(ws, cols: int, min_width: int = 12, max_width: int = 40):
     for col in range(1, cols + 1):
         max_len = min_width
@@ -65,11 +72,11 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
         ws.cell(row=row, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
         ws.cell(row=row, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        ws.cell(row=row, column=3, value=format_amount(amount_val)).border = THIN_BORDER
+        cell = _amount_cell(ws, row, 3, amount_val)
         if t["type"] in EXPENSE_TYPES:
-            ws.cell(row=row, column=3).font = Font(color="FF0000")
+            cell.font = Font(color="FF0000")
         elif t["type"] in ("income", "transfer_in"):
-            ws.cell(row=row, column=3).font = Font(color="008000")
+            cell.font = Font(color="008000")
         ws.cell(row=row, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
         ws.cell(row=row, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
         ws.cell(row=row, column=6, value=t.get("object_name", "") or "").border = THIN_BORDER
@@ -115,12 +122,12 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         _add_title(ws, title, len(headers))
 
         ws.cell(row=3, column=1, value="Остаток на начало:").font = Font(bold=True)
-        ws.cell(row=3, column=2, value=format_amount(opening)).border = THIN_BORDER
+        _amount_cell(ws, 3, 2, opening)
         _write_transactions(ws, txns, 5, headers)
 
         last_row = ws.max_row + 1
         ws.cell(row=last_row, column=1, value="Остаток на конец:").font = Font(bold=True)
-        ws.cell(row=last_row, column=2, value=format_amount(closing)).border = THIN_BORDER
+        _amount_cell(ws, last_row, 2, closing)
 
         _auto_width(ws, len(headers))
         total_income += sum(t["amount"] for t in txns if t["type"] == "income")
@@ -141,7 +148,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
 
     _add_title(ws_hq, f"Головной офис {format_date(start_date)} — {format_date(end_date)}", len(hq_headers))
     ws_hq.cell(row=3, column=1, value="Остаток на начало:").font = Font(bold=True)
-    ws_hq.cell(row=3, column=2, value=format_amount(hq_opening)).border = THIN_BORDER
+    _amount_cell(ws_hq, 3, 2, hq_opening)
 
     hq_data_row = 5
     for col_idx, h in enumerate(hq_headers, 1):
@@ -152,11 +159,11 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         ws_hq.cell(row=r, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
         ws_hq.cell(row=r, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        ws_hq.cell(row=r, column=3, value=format_amount(amount_val)).border = THIN_BORDER
+        cell = _amount_cell(ws_hq, r, 3, amount_val)
         if t["type"] in EXPENSE_TYPES:
-            ws_hq.cell(row=r, column=3).font = Font(color="FF0000")
+            cell.font = Font(color="FF0000")
         elif t["type"] == "transfer_in":
-            ws_hq.cell(row=r, column=3).font = Font(color="008000")
+            cell.font = Font(color="008000")
         ws_hq.cell(row=r, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
         ws_hq.cell(row=r, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
         ws_hq.cell(row=r, column=6, value=t.get("source_object_name", "") or "").border = THIN_BORDER
@@ -164,7 +171,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
 
     last_row = ws_hq.max_row + 1
     ws_hq.cell(row=last_row, column=1, value="Остаток на конец:").font = Font(bold=True)
-    ws_hq.cell(row=last_row, column=2, value=format_amount(hq_closing)).border = THIN_BORDER
+    _amount_cell(ws_hq, last_row, 2, hq_closing)
     _auto_width(ws_hq, len(hq_headers))
 
     # Summary sheet
@@ -174,11 +181,11 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     ws.cell(row=3, column=2, value="Сумма").font = Font(bold=True)
     _style_header(ws, 3, 2)
     ws.cell(row=4, column=1, value="Всего приход").border = THIN_BORDER
-    ws.cell(row=4, column=2, value=format_amount(total_income)).border = THIN_BORDER
+    _amount_cell(ws, 4, 2, total_income)
     ws.cell(row=5, column=1, value="Всего расход").border = THIN_BORDER
-    ws.cell(row=5, column=2, value=format_amount(total_expense)).border = THIN_BORDER
+    _amount_cell(ws, 5, 2, total_expense)
     ws.cell(row=6, column=1, value="Всего переводов в офис").border = THIN_BORDER
-    ws.cell(row=6, column=2, value=format_amount(total_transfer)).border = THIN_BORDER
+    _amount_cell(ws, 6, 2, total_transfer)
 
     _auto_width(ws, 2)
     wb.save(filepath)
@@ -204,13 +211,13 @@ async def generate_object_report(object_id: int, object_name: str, start_date: s
     _add_title(ws, f"«{object_name}» {format_date(start_date)} — {format_date(end_date)}", len(headers))
 
     ws.cell(row=3, column=1, value="Остаток на начало периода:").font = Font(bold=True)
-    ws.cell(row=3, column=2, value=format_amount(opening)).border = THIN_BORDER
+    _amount_cell(ws, 3, 2, opening)
 
     _write_transactions(ws, txns, 5, headers[:5])
 
     last_row = ws.max_row + 1
     ws.cell(row=last_row, column=1, value="Остаток на конец периода:").font = Font(bold=True)
-    ws.cell(row=last_row, column=2, value=format_amount(closing)).border = THIN_BORDER
+    _amount_cell(ws, last_row, 2, closing)
 
     _auto_width(ws, len(headers))
     wb.save(filepath)
@@ -238,22 +245,22 @@ async def generate_daily_report(object_id: int, object_name: str, date_str: str 
     _add_title(ws, f"Дневной отчет «{object_name}» за {format_date(date_str)}", len(headers))
 
     ws.cell(row=3, column=1, value="Остаток на начало дня:").font = Font(bold=True)
-    ws.cell(row=3, column=2, value=format_amount(summary["opening"])).border = THIN_BORDER
+    _amount_cell(ws, 3, 2, summary["opening"])
 
     _write_transactions(ws, txns, 5, headers)
 
     r = ws.max_row + 1
     ws.cell(row=r, column=1, value="Итого приход:").font = Font(bold=True)
-    ws.cell(row=r, column=2, value=format_amount(summary["income"])).border = THIN_BORDER
+    _amount_cell(ws, r, 2, summary["income"])
     r += 1
     ws.cell(row=r, column=1, value="Итого расход:").font = Font(bold=True)
-    ws.cell(row=r, column=2, value=format_amount(summary["expense"])).border = THIN_BORDER
+    _amount_cell(ws, r, 2, summary["expense"])
     r += 1
     ws.cell(row=r, column=1, value="Перевод в офис:").font = Font(bold=True)
-    ws.cell(row=r, column=2, value=format_amount(summary["transfer_out"])).border = THIN_BORDER
+    _amount_cell(ws, r, 2, summary["transfer_out"])
     r += 1
     ws.cell(row=r, column=1, value="Остаток на конец дня:").font = Font(bold=True)
-    ws.cell(row=r, column=2, value=format_amount(summary["closing"])).border = THIN_BORDER
+    _amount_cell(ws, r, 2, summary["closing"])
 
     _auto_width(ws, len(headers))
     wb.save(filepath)
