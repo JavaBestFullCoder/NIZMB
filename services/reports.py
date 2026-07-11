@@ -271,8 +271,6 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         ws.cell(row=r, column=1, value=label).border = THIN_BORDER
 
         if key == "transfer_out":
-            # Total = sum of all column values (HQ transfer_in + all object transfer_out)
-            # HQ shows transfer_in (green); objects show transfer_out (red)
             hq_val = hq_metrics["transfer_in"]
             objects_val = sum(ed["metrics"]["transfer_out"] for ed in entity_data)
             total = hq_val + objects_val
