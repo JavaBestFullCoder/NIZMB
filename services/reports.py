@@ -269,8 +269,6 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     for label, key in indicator_defs:
         is_expense = key != "income"
         hq_val = hq_metrics[key]
-        if key == "income":
-            hq_val += hq_metrics["transfer_in"]
         objects_val = sum(ed["metrics"][key] for ed in entity_data)
         total = hq_val + objects_val
         is_green = key == "income"
