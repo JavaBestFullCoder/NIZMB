@@ -7,23 +7,25 @@ def head_office_menu() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="📋 Управление объектами"))
     builder.row(KeyboardButton(text="📊 Отчеты за период"), KeyboardButton(text="💰 Мой счет"))
-    builder.row(KeyboardButton(text="💸 Расход"), KeyboardButton(text="☁️ Google Диск"))
+    builder.row(KeyboardButton(text="💸 Расход"), KeyboardButton(text="👔 Расход Директора"))
+    builder.row(KeyboardButton(text="📦 Оплата поставщика"), KeyboardButton(text="👤 Создать код ГО"))
+    builder.row(KeyboardButton(text="🔑 Коды доступа"))
     return builder.as_markup(resize_keyboard=True)
 
 
 def manager_menu() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="💰 Приход"), KeyboardButton(text="💸 Расход"))
-    builder.row(KeyboardButton(text="🔄 Перевод в офис"), KeyboardButton(text="👥 Сотрудники"))
-    builder.row(KeyboardButton(text="📊 Отчеты"), KeyboardButton(text="☁️ Google Диск"))
+    builder.row(KeyboardButton(text="👔 Расход Директора"), KeyboardButton(text="📦 Оплата поставщика"))
+    builder.row(KeyboardButton(text="🔄 Перевод в офис"), KeyboardButton(text="📊 Отчеты"))
     return builder.as_markup(resize_keyboard=True)
 
 
 def employee_menu() -> ReplyKeyboardMarkup:
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="💰 Приход"), KeyboardButton(text="💸 Расход"))
+    builder.row(KeyboardButton(text="👔 Расход Директора"), KeyboardButton(text="📦 Оплата поставщика"))
     builder.row(KeyboardButton(text="🔄 Перевод в офис"), KeyboardButton(text="📊 Отчеты"))
-    builder.row(KeyboardButton(text="☁️ Google Диск"))
     return builder.as_markup(resize_keyboard=True)
 
 

@@ -3,6 +3,8 @@ from config import DB_PATH
 
 _db: aiosqlite.Connection | None = None
 
+EXPENSE_TYPES = ("expense", "transfer_out", "director_expense", "supplier_payment")
+
 
 async def get_db() -> aiosqlite.Connection:
     global _db
@@ -121,6 +123,21 @@ async def delete_access_codes_for_object(object_id: int):
     db = await get_db()
     await db.execute("DELETE FROM access_codes WHERE object_id = ?", (object_id,))
     await db.commit()
+
+
+async def get_all_codes_with_users() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute("""
+        SELECT ac.code, ac.role, ac.object_id, o.name as object_name,
+               GROUP_CONCAT(u.name, ', ') as user_names
+        FROM access_codes ac
+        LEFT JOIN objects o ON ac.object_id = o.id
+        LEFT JOIN users u ON u.access_code = ac.code
+        GROUP BY ac.code
+        ORDER BY ac.role, ac.code
+    """)
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- Users ---
@@ -249,14 +266,28 @@ async def get_object_transactions(object_id: int, start_date: str, end_date: str
 async def get_hq_transactions(start_date: str, end_date: str) -> list[dict]:
     db = await get_db()
     cursor = await db.execute("""
-        SELECT t.*, u.name as user_name
+        SELECT t.*, u.name as user_name,
+               tl.source_object_id, o.name as source_object_name
         FROM transactions t
         LEFT JOIN users u ON t.user_id = u.id
+        LEFT JOIN transfer_links tl ON t.id = tl.transfer_in_id
+        LEFT JOIN objects o ON tl.source_object_id = o.id
         WHERE t.object_id IS NULL AND t.transaction_date >= ? AND t.transaction_date <= ?
         ORDER BY t.transaction_date, t.id
     """, (start_date, end_date))
     rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+async def get_hq_balance_before(date_str: str) -> float:
+    db = await get_db()
+    cursor = await db.execute(f"""
+        SELECT COALESCE(SUM(CASE WHEN type = 'transfer_in' THEN amount ELSE 0 END), 0) -
+               COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
+        FROM transactions WHERE object_id IS NULL AND transaction_date < ?
+    """, (date_str,))
+    row = await cursor.fetchone()
+    return row[0] or 0.0
 
 
 async def get_all_objects_transactions(start_date: str, end_date: str) -> list[dict]:
@@ -285,9 +316,9 @@ async def get_employees(object_id: int) -> list[dict]:
 
 async def get_object_balance(object_id: int) -> float:
     db = await get_db()
-    cursor = await db.execute("""
+    cursor = await db.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) -
-               COALESCE(SUM(CASE WHEN type IN ('expense', 'transfer_out') THEN amount ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
         FROM transactions WHERE object_id = ?
     """, (object_id,))
     row = await cursor.fetchone()
@@ -296,9 +327,9 @@ async def get_object_balance(object_id: int) -> float:
 
 async def get_hq_balance() -> float:
     db = await get_db()
-    cursor = await db.execute("""
+    cursor = await db.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN type = 'transfer_in' THEN amount ELSE 0 END), 0) -
-               COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
         FROM transactions WHERE object_id IS NULL
     """)
     row = await cursor.fetchone()
@@ -321,8 +352,8 @@ async def get_daily_summary(object_id: int, date_str: str) -> dict:
     for r in rows:
         if r["type"] == "income":
             income = r["total"]
-        elif r["type"] == "expense":
-            expense = r["total"]
+        elif r["type"] in ("expense", "director_expense", "supplier_payment"):
+            expense += r["total"]
         elif r["type"] == "transfer_out":
             transfer_out = r["total"]
     closing = opening + income - expense - transfer_out
@@ -331,9 +362,9 @@ async def get_daily_summary(object_id: int, date_str: str) -> dict:
 
 async def get_object_balance_before(object_id: int, date_str: str) -> float:
     db = await get_db()
-    cursor = await db.execute("""
+    cursor = await db.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) -
-               COALESCE(SUM(CASE WHEN type IN ('expense', 'transfer_out') THEN amount ELSE 0 END), 0)
+               COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
         FROM transactions WHERE object_id = ? AND transaction_date < ?
     """, (object_id, date_str))
     row = await cursor.fetchone()

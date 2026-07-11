@@ -9,5 +9,4 @@ TZ_NAME = "Asia/Tashkent"
 TZ = pytz.timezone(TZ_NAME)
 DB_PATH = os.path.join(BASE_DIR, "bot.db")
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
-GOOGLE_CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
-GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID", "")
+

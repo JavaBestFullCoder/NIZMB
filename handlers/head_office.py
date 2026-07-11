@@ -1,11 +1,7 @@
-import os
-from pathlib import Path
-
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
-from config import REPORTS_DIR
 from filters import IsHeadOffice
 from keyboards import (
     head_office_menu, objects_inline, object_actions_inline,
@@ -15,11 +11,11 @@ from database import (
     get_object, get_objects, create_object, delete_object,
     create_transaction, get_object_balance, get_employees,
     code_exists, get_user_by_telegram, create_access_code,
+    get_all_codes_with_users,
 )
-from states import AddObject, AddEmployee, ReportPeriod, AddExpense
+from states import AddObject, AddEmployee, AddExpense, AddHQUser, ReportPeriod
 from services.balance import get_hq_balance_text
 from services.reports import generate_all_objects_report, generate_object_report, generate_object_report_text
-from services.google_drive import upload_file, is_configured, setup_instructions
 from utils import parse_amount, parse_date, format_amount, format_date, today_str
 
 router = Router()
@@ -174,11 +170,11 @@ async def add_employee_code(message: Message, state: FSMContext):
         await message.answer("Код должен быть минимум 3 символа. Попробуйте снова:")
         return
     data = await state.get_data()
-    await create_access_code(code, "employee", data["emp_obj_id"])
+    await create_access_code(code, "manager", data["emp_obj_id"])
     await state.clear()
     await message.answer(
-        f"✅ Код сотрудника создан для «{data['emp_obj_name']}»\n"
-        f"Код доступа: `{code}`\n\n"
+        f"✅ Код менеджера создан для «{data['emp_obj_name']}»\n"
+        f"Код: `{code}`\n\n"
         f"Сколько угодно человек могут войти по этому коду.",
         parse_mode="Markdown",
         reply_markup=head_office_menu(),
@@ -219,17 +215,41 @@ async def delete_object_execute(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "💰 Мой счет")
 async def hq_balance(message: Message):
     text = await get_hq_balance_text()
-    await message.answer(text)
+    await message.answer(text, parse_mode="Markdown")
+
+
+# --- HQ Expense types ---
+_HQ_EXPENSE_LABELS = {
+    "expense": ("💸 Расход", "✅ Расход ГО"),
+    "director_expense": ("👔 Расход Директора", "✅ Расход Директора ГО"),
+    "supplier_payment": ("📦 Оплата поставщика", "✅ Оплата поставщика ГО"),
+}
+
+
+async def _hq_expense_start(message: Message, state: FSMContext, exp_type: str):
+    label, _ = _HQ_EXPENSE_LABELS.get(exp_type, ("Расход", "Расход"))
+    await state.update_data(exp_type=exp_type)
+    await state.set_state(AddExpense.waiting_for_amount)
+    await message.answer(
+        f"{label}\n\nВведите **сумму** для головного офиса:",
+        reply_markup=cancel_keyboard(),
+        parse_mode="Markdown",
+    )
 
 
 @router.message(F.text == "💸 Расход")
 async def hq_expense_start(message: Message, state: FSMContext):
-    await state.set_state(AddExpense.waiting_for_amount)
-    await message.answer(
-        "Введите **сумму расхода** для головного офиса:",
-        reply_markup=cancel_keyboard(),
-        parse_mode="Markdown",
-    )
+    await _hq_expense_start(message, state, "expense")
+
+
+@router.message(F.text == "👔 Расход Директора")
+async def hq_director_expense_start(message: Message, state: FSMContext):
+    await _hq_expense_start(message, state, "director_expense")
+
+
+@router.message(F.text == "📦 Оплата поставщика")
+async def hq_supplier_payment_start(message: Message, state: FSMContext):
+    await _hq_expense_start(message, state, "supplier_payment")
 
 
 @router.message(AddExpense.waiting_for_amount, IsHeadOffice())
@@ -238,16 +258,16 @@ async def hq_expense_amount(message: Message, state: FSMContext):
     if amount is None:
         await message.answer("❌ Неверная сумма. Введите число больше 0:")
         return
-    await state.update_data(exp_amount=amount, exp_is_hq=True)
+    await state.update_data(exp_amount=amount)
     await state.set_state(AddExpense.waiting_for_reason)
-    await message.answer(f"Сумма: {format_amount(amount)} сум\n\nВведите **причина** расхода:")
+    await message.answer(f"Сумма: {format_amount(amount)} сум\n\nВведите **причину**:", parse_mode="Markdown")
 
 
 @router.message(AddExpense.waiting_for_reason, IsHeadOffice())
 async def hq_expense_reason(message: Message, state: FSMContext):
     reason = message.text.strip()
     if len(reason) < 2:
-        await message.answer("❌ Укажите причину расхода (минимум 2 символа):")
+        await message.answer("❌ Укажите причину (минимум 2 символа):")
         return
     await state.update_data(exp_reason=reason)
     await state.set_state(AddExpense.waiting_for_date)
@@ -266,17 +286,19 @@ async def hq_expense_date(message: Message, state: FSMContext):
     data = await state.get_data()
     user = await get_user_by_telegram(message.from_user.id)
     date_str = date.strftime("%Y-%m-%d")
+    exp_type = data.get("exp_type", "expense")
     await create_transaction(
         object_id=None,
         user_id=user["id"],
-        type_="expense",
+        type_=exp_type,
         amount=data["exp_amount"],
         reason=data["exp_reason"],
         date_str=date_str,
     )
     await state.clear()
+    _, label_done = _HQ_EXPENSE_LABELS.get(exp_type, ("", "✅ Расход ГО"))
     await message.answer(
-        f"✅ Расход головного офиса за {format_date(date_str)}:\n"
+        f"{label_done} за {format_date(date_str)}:\n"
         f"Сумма: {format_amount(data['exp_amount'])} сум\n"
         f"Причина: {data['exp_reason']}",
         reply_markup=head_office_menu(),
@@ -351,42 +373,74 @@ async def report_end_date(message: Message, state: FSMContext):
         await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
 
 
-@router.message(F.text == "☁️ Google Диск")
-async def upload_to_drive(message: Message):
-    if not await is_configured():
-        await message.answer(
-            "❌ Google Диск не настроен.\n\n" + setup_instructions(),
-            disable_web_page_preview=True,
-        )
+# --- View access codes ---
+@router.message(F.text == "🔑 Коды доступа")
+async def show_access_codes(message: Message):
+    codes = await get_all_codes_with_users()
+    if not codes:
+        await message.answer("❌ Нет созданных кодов доступа.")
         return
 
+    lines = ["🔑 **Все коды доступа:**\n"]
+    for c in codes:
+        role_names = {"head_office": "ГО", "manager": "Менеджер", "employee": "Сотрудник"}
+        role_label = role_names.get(c["role"], c["role"])
+        obj = f" ({c['object_name']})" if c["object_name"] else ""
+        names = c["user_names"] if c["user_names"] else "—"
+        lines.append(f"• {names} — `{c['code']}` ({role_label}{obj})")
+
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+
+# --- Create HQ code ---
+@router.message(F.text == "👤 Создать код ГО")
+async def create_hq_code_start(message: Message, state: FSMContext):
+    await state.set_state(AddHQUser.waiting_for_name)
     await message.answer(
-        "☁️ **Загрузка на Google Диск**\n\n"
-        "Отправьте файл .xlsx для загрузки или используйте /upload_last",
+        "👤 **Создание кода головного офиса**\n\n"
+        "Введите **имя** сотрудника ГО:",
+        reply_markup=cancel_keyboard(),
         parse_mode="Markdown",
     )
 
 
-@router.message(F.document)
-async def handle_document(message: Message):
-    if not await is_configured():
-        await message.answer("❌ Google Диск не настроен.")
+@router.message(AddHQUser.waiting_for_name)
+async def create_hq_code_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if len(name) < 2 or len(name) > 100:
+        await message.answer("❌ Имя должно быть от 2 до 100 символов. Попробуйте снова:")
         return
-    file = message.document
-    if not file.file_name.endswith(".xlsx"):
-        await message.answer("❌ Поддерживаются только .xlsx файлы.")
+    await state.update_data(hq_name=name)
+    await state.set_state(AddHQUser.waiting_for_code)
+    await message.answer(
+        f"Имя: {name}\n\n"
+        "Введите **код доступа** для этого сотрудника ГО:",
+        reply_markup=back_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AddHQUser.waiting_for_code)
+async def create_hq_code_final(message: Message, state: FSMContext):
+    code = message.text.strip()
+    if await code_exists(code):
+        await message.answer("❌ Этот код уже используется. Придумайте другой:")
         return
-    msg = await message.answer("⏳ Загрузка на Google Диск...")
-    try:
-        file_path = os.path.join(REPORTS_DIR, file.file_name or "report.xlsx")
-        await message.bot.download(file.file_id, destination=Path(file_path))
-        link = await upload_file(file_path)
-        if link:
-            await msg.edit_text(f"✅ Файл загружен:\n{link}", disable_web_page_preview=True)
-        else:
-            await msg.edit_text("❌ Ошибка загрузки на Google Диск.")
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка: {e}")
+    if len(code) < 3:
+        await message.answer("❌ Код должен быть минимум 3 символа. Попробуйте снова:")
+        return
+    data = await state.get_data()
+    hq_name = data["hq_name"]
+    await create_access_code(code, "head_office", None)
+    await state.clear()
+    await message.answer(
+        f"✅ Код головного офиса создан!\n\n"
+        f"Имя: {hq_name}\n"
+        f"Код: `{code}`\n\n"
+        f"Этот код предоставляет полный доступ к управлению.",
+        parse_mode="Markdown",
+        reply_markup=head_office_menu(),
+    )
 
 
 @router.callback_query(F.data == "cancel_action")

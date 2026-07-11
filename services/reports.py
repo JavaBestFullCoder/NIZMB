@@ -5,7 +5,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 from config import REPORTS_DIR
-from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object
+from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, EXPENSE_TYPES
 from utils import format_date, format_amount, today_str, TZ
 
 THIN_BORDER = Border(
@@ -21,6 +21,8 @@ TITLE_FONT = Font(bold=True, size=14)
 TYPE_NAMES = {
     "income": "Приход",
     "expense": "Расход",
+    "director_expense": "Расход Директора",
+    "supplier_payment": "Оплата Поставщика",
     "transfer_out": "Перевод в офис",
     "transfer_in": "Перевод из объекта",
 }
@@ -62,10 +64,11 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
     for t in transactions:
         ws.cell(row=row, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
         ws.cell(row=row, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
-        ws.cell(row=row, column=3, value=format_amount(t["amount"])).border = THIN_BORDER
-        if t["type"] == "expense":
+        amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
+        ws.cell(row=row, column=3, value=format_amount(amount_val)).border = THIN_BORDER
+        if t["type"] in EXPENSE_TYPES:
             ws.cell(row=row, column=3).font = Font(color="FF0000")
-        elif t["type"] in ("income",):
+        elif t["type"] in ("income", "transfer_in"):
             ws.cell(row=row, column=3).font = Font(color="008000")
         ws.cell(row=row, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
         ws.cell(row=row, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
@@ -82,7 +85,7 @@ def _balance_as_of(object_id: int, transactions: list[dict], date_str: str, open
             break
         if t["type"] == "income":
             bal += t["amount"]
-        elif t["type"] in ("expense", "transfer_out"):
+        elif t["type"] in EXPENSE_TYPES:
             bal -= t["amount"]
     return bal
 
@@ -124,6 +127,46 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         total_expense += sum(t["amount"] for t in txns if t["type"] == "expense")
         total_transfer += sum(t["amount"] for t in txns if t["type"] == "transfer_out")
 
+    # HQ sheet
+    hq_headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
+    ws_hq = wb.create_sheet(title="Головной офис")
+    hq_txns = await get_hq_transactions(start_date, end_date)
+    hq_opening = await get_hq_balance_before(start_date)
+    hq_closing = hq_opening
+    for t in hq_txns:
+        if t["type"] == "transfer_in":
+            hq_closing += t["amount"]
+        elif t["type"] in EXPENSE_TYPES:
+            hq_closing -= t["amount"]
+
+    _add_title(ws_hq, f"Головной офис {format_date(start_date)} — {format_date(end_date)}", len(hq_headers))
+    ws_hq.cell(row=3, column=1, value="Остаток на начало:").font = Font(bold=True)
+    ws_hq.cell(row=3, column=2, value=format_amount(hq_opening)).border = THIN_BORDER
+
+    hq_data_row = 5
+    for col_idx, h in enumerate(hq_headers, 1):
+        ws_hq.cell(row=hq_data_row, column=col_idx, value=h)
+    _style_header(ws_hq, hq_data_row, len(hq_headers))
+    r = hq_data_row + 1
+    for t in hq_txns:
+        ws_hq.cell(row=r, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
+        ws_hq.cell(row=r, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
+        amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
+        ws_hq.cell(row=r, column=3, value=format_amount(amount_val)).border = THIN_BORDER
+        if t["type"] in EXPENSE_TYPES:
+            ws_hq.cell(row=r, column=3).font = Font(color="FF0000")
+        elif t["type"] == "transfer_in":
+            ws_hq.cell(row=r, column=3).font = Font(color="008000")
+        ws_hq.cell(row=r, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=6, value=t.get("source_object_name", "") or "").border = THIN_BORDER
+        r += 1
+
+    last_row = ws_hq.max_row + 1
+    ws_hq.cell(row=last_row, column=1, value="Остаток на конец:").font = Font(bold=True)
+    ws_hq.cell(row=last_row, column=2, value=format_amount(hq_closing)).border = THIN_BORDER
+    _auto_width(ws_hq, len(hq_headers))
+
     # Summary sheet
     ws = wb.create_sheet(title="Сводка")
     _add_title(ws, f"Сводка {format_date(start_date)} — {format_date(end_date)}", 2)
@@ -136,20 +179,6 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     ws.cell(row=5, column=2, value=format_amount(total_expense)).border = THIN_BORDER
     ws.cell(row=6, column=1, value="Всего переводов в офис").border = THIN_BORDER
     ws.cell(row=6, column=2, value=format_amount(total_transfer)).border = THIN_BORDER
-
-    # HQ transactions
-    hq_txns = await get_hq_transactions(start_date, end_date)
-    if hq_txns:
-        ws.cell(row=8, column=1, value="Головной офис").font = Font(bold=True, size=12)
-        ws.merge_cells(start_row=8, start_column=1, end_row=8, end_column=2)
-        ws.cell(row=9, column=1, value="Тип").font = Font(bold=True)
-        ws.cell(row=9, column=2, value="Сумма").font = Font(bold=True)
-        _style_header(ws, 9, 2)
-        r = 10
-        for t in hq_txns:
-            ws.cell(row=r, column=1, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
-            ws.cell(row=r, column=2, value=format_amount(t["amount"])).border = THIN_BORDER
-            r += 1
 
     _auto_width(ws, 2)
     wb.save(filepath)
@@ -237,25 +266,13 @@ async def generate_object_report_text(object_id: int, object_name: str, start_da
     txns = await get_object_transactions(object_id, start_date, end_date)
     opening = await get_object_balance_before(object_id, start_date)
     closing = _balance_as_of(object_id, txns, end_date, opening)
+    total_income = sum(t["amount"] for t in txns if t["type"] == "income")
+    total_expense = sum(t["amount"] for t in txns if t["type"] in ("expense", "transfer_out"))
 
-    lines = [
-        f"📊 **Отчет «{object_name}»**",
-        f"📅 {format_date(start_date)} — {format_date(end_date)}",
-        f"🔵 Остаток на начало: {format_amount(opening)} сум",
-        "",
-    ]
-
-    current_date = None
-    for t in txns:
-        if t["transaction_date"] != current_date:
-            current_date = t["transaction_date"]
-            lines.append(f"━━━ **{format_date(current_date)}** ━━━")
-        user = t.get("user_name", "") or "—"
-        op = TYPE_NAMES.get(t["type"], t["type"])
-        lines.append(f"  {user} — {op} — {format_amount(t['amount'])} сум")
-        if t.get("reason"):
-            lines.append(f"    └ Причина: {t['reason']}")
-
-    lines.append("")
-    lines.append(f"🏁 Остаток на конец периода: {format_amount(closing)} сум")
-    return "\n".join(lines)
+    return (
+        f"📅 {format_date(start_date)} — {format_date(end_date)}\n"
+        f"🔵 Остаток на начало: {format_amount(opening)} сум\n"
+        f"🟢 Всего приход: +{format_amount(total_income)} сум\n"
+        f"🔴 Всего расход: -{format_amount(total_expense)} сум\n"
+        f"🏁 Остаток на конец: {format_amount(closing)} сум"
+    )

@@ -30,8 +30,9 @@ class ReportPeriod(StatesGroup):
 class SelectObjectState(StatesGroup):
     waiting = State()
 
-class GoogleDriveSetup(StatesGroup):
-    waiting_for_folder_id = State()
+class AddHQUser(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_code = State()
 
 class DeleteConfirm(StatesGroup):
     waiting = State()
