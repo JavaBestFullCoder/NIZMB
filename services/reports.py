@@ -271,10 +271,13 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         ws.cell(row=r, column=1, value=label).border = THIN_BORDER
 
         if key == "transfer_out":
+            # Total = sum of all column values (HQ transfer_in + all object transfer_out)
             # HQ shows transfer_in (green); objects show transfer_out (red)
-            total_val = hq_metrics["transfer_in"]
-            col = 2; _write_metric(ws, r, total_val, is_expense=False, green=True)
-            col = 3; _write_metric(ws, r, hq_metrics["transfer_in"], is_expense=False, green=True)
+            hq_val = hq_metrics["transfer_in"]
+            objects_val = sum(ed["metrics"]["transfer_out"] for ed in entity_data)
+            total = hq_val + objects_val
+            col = 2; _write_metric(ws, r, total, is_expense=False, green=True)
+            col = 3; _write_metric(ws, r, hq_val, is_expense=False, green=True)
             col = 4
             for ed in entity_data:
                 _write_metric(ws, r, ed["metrics"]["transfer_out"], is_expense=True)
