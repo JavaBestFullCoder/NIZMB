@@ -87,36 +87,52 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
     return row
 
 
+DEL_HEADER_FILL = PatternFill(start_color="FFB3B3", end_color="FFB3B3", fill_type="solid")
+RED_DATA_FONT = Font(color="CC0000")
+
+
 def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
     ws = wb.create_sheet(title="Удаленные")
     del_headers = ["ID", "Дата", "Время", "Тип", "Сумма", "Причина", "Сотрудник", "Объект", "Дата удаления", "Время удаления", "Кто удалил", "Причина удаления"]
     _add_title(ws, title, len(del_headers))
 
     for col_idx, h in enumerate(del_headers, 1):
-        ws.cell(row=2, column=col_idx, value=h)
-    _style_header(ws, 2, len(del_headers))
+        cell = ws.cell(row=2, column=col_idx, value=h)
+        cell.font = Font(bold=True, color="FFFFFF", size=11)
+        cell.fill = DEL_HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = THIN_BORDER
 
     row = 3
+    RED_DATA = Font(color="CC0000")
     for d in deleted_ops:
-        ws.cell(row=row, column=1, value=d["original_id"]).border = THIN_BORDER
+        ws.cell(row=row, column=1, value=d["original_id"]).font = RED_DATA
+        ws.cell(row=row, column=1).border = THIN_BORDER
         dt_str = d["transaction_date"]
-        ws.cell(row=row, column=2, value=format_date(dt_str[:10])).border = THIN_BORDER
-        ws.cell(row=row, column=3, value=dt_str[11:19] if len(dt_str) > 10 else "").border = THIN_BORDER
-        ws.cell(row=row, column=4, value=TYPE_NAMES.get(d["type"], d["type"])).border = THIN_BORDER
+        ws.cell(row=row, column=2, value=format_date(dt_str[:10])).font = RED_DATA
+        ws.cell(row=row, column=2).border = THIN_BORDER
+        ws.cell(row=row, column=3, value=dt_str[11:19] if len(dt_str) > 10 else "").font = RED_DATA
+        ws.cell(row=row, column=3).border = THIN_BORDER
+        ws.cell(row=row, column=4, value=TYPE_NAMES.get(d["type"], d["type"])).font = RED_DATA
+        ws.cell(row=row, column=4).border = THIN_BORDER
         amount_val = -d["amount"] if d["type"] in EXPENSE_TYPES else d["amount"]
         cell = _amount_cell(ws, row, 5, amount_val)
-        if d["type"] in EXPENSE_TYPES:
-            cell.font = Font(color="FF0000")
-        elif d["type"] in ("income", "transfer_in"):
-            cell.font = Font(color="008000")
-        ws.cell(row=row, column=6, value=d.get("reason", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=7, value=d.get("original_user_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=8, value=d.get("object_name", "") or "").border = THIN_BORDER
+        cell.font = RED_DATA
+        ws.cell(row=row, column=6, value=d.get("reason", "") or "").font = RED_DATA
+        ws.cell(row=row, column=6).border = THIN_BORDER
+        ws.cell(row=row, column=7, value=d.get("original_user_name", "") or "").font = RED_DATA
+        ws.cell(row=row, column=7).border = THIN_BORDER
+        ws.cell(row=row, column=8, value=d.get("object_name", "") or "").font = RED_DATA
+        ws.cell(row=row, column=8).border = THIN_BORDER
         del_str = d["deleted_at"]
-        ws.cell(row=row, column=9, value=format_date(del_str[:10])).border = THIN_BORDER
-        ws.cell(row=row, column=10, value=del_str[11:19] if len(del_str) > 10 else "").border = THIN_BORDER
-        ws.cell(row=row, column=11, value=d.get("deleted_by_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=12, value=d.get("delete_reason", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=9, value=format_date(del_str[:10])).font = RED_DATA
+        ws.cell(row=row, column=9).border = THIN_BORDER
+        ws.cell(row=row, column=10, value=del_str[11:19] if len(del_str) > 10 else "").font = RED_DATA
+        ws.cell(row=row, column=10).border = THIN_BORDER
+        ws.cell(row=row, column=11, value=d.get("deleted_by_name", "") or "").font = RED_DATA
+        ws.cell(row=row, column=11).border = THIN_BORDER
+        ws.cell(row=row, column=12, value=d.get("delete_reason", "") or "").font = RED_DATA
+        ws.cell(row=row, column=12).border = THIN_BORDER
         row += 1
 
     _auto_width(ws, len(del_headers))
