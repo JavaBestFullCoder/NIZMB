@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter
 
 from config import REPORTS_DIR
 from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, EXPENSE_TYPES
-from utils import format_date, format_amount, today_str, TZ
+from utils import format_date, format_datetime, format_amount, today_str, TZ
 
 THIN_BORDER = Border(
     left=Side(style="thin"),
@@ -69,17 +69,18 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
     row = start_row + 1
 
     for t in transactions:
-        ws.cell(row=row, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
-        ws.cell(row=row, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
+        ws.cell(row=row, column=1, value=t["id"]).border = THIN_BORDER
+        ws.cell(row=row, column=2, value=format_datetime(t["transaction_date"])).border = THIN_BORDER
+        ws.cell(row=row, column=3, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        cell = _amount_cell(ws, row, 3, amount_val)
+        cell = _amount_cell(ws, row, 4, amount_val)
         if t["type"] in EXPENSE_TYPES:
             cell.font = Font(color="FF0000")
         elif t["type"] in ("income", "transfer_in"):
             cell.font = Font(color="008000")
-        ws.cell(row=row, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=6, value=t.get("object_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=5, value=t.get("reason", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=6, value=t.get("user_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=7, value=t.get("object_name", "") or "").border = THIN_BORDER
         row += 1
     return row
 
@@ -88,7 +89,7 @@ def _balance_as_of(object_id: int, transactions: list[dict], date_str: str, open
     """Calculate balance including all transactions up to and including date_str."""
     bal = opening
     for t in transactions:
-        if t["transaction_date"] > date_str:
+        if t["transaction_date"][:10] > date_str:
             break
         if t["type"] == "income":
             bal += t["amount"]
@@ -138,7 +139,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     wb = Workbook()
     wb.remove(wb.active)
     objects = await get_objects()
-    headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
+    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
 
     entity_data = []
 
@@ -170,7 +171,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         _auto_width(ws, len(headers))
 
     # HQ sheet
-    hq_headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
+    hq_headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
     ws_hq = wb.create_sheet(title="Головной офис")
     hq_txns = await get_hq_transactions(start_date, end_date)
     hq_opening = await get_hq_balance_before(start_date)
@@ -193,17 +194,18 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     _style_header(ws_hq, hq_data_row, len(hq_headers))
     r = hq_data_row + 1
     for t in hq_txns:
-        ws_hq.cell(row=r, column=1, value=format_date(t["transaction_date"])).border = THIN_BORDER
-        ws_hq.cell(row=r, column=2, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
+        ws_hq.cell(row=r, column=1, value=t["id"]).border = THIN_BORDER
+        ws_hq.cell(row=r, column=2, value=format_datetime(t["transaction_date"])).border = THIN_BORDER
+        ws_hq.cell(row=r, column=3, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        cell = _amount_cell(ws_hq, r, 3, amount_val)
+        cell = _amount_cell(ws_hq, r, 4, amount_val)
         if t["type"] in EXPENSE_TYPES:
             cell.font = Font(color="FF0000")
         elif t["type"] == "transfer_in":
             cell.font = Font(color="008000")
-        ws_hq.cell(row=r, column=4, value=t.get("reason", "") or "").border = THIN_BORDER
-        ws_hq.cell(row=r, column=5, value=t.get("user_name", "") or "").border = THIN_BORDER
-        ws_hq.cell(row=r, column=6, value=t.get("source_object_name", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=5, value=t.get("reason", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=6, value=t.get("user_name", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=7, value=t.get("source_object_name", "") or "").border = THIN_BORDER
         r += 1
 
     last_row = ws_hq.max_row + 1
@@ -324,13 +326,13 @@ async def generate_object_report(object_id: int, object_name: str, start_date: s
     ws = wb.active
     ws.title = object_name[:31]
 
-    headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник"]
+    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
     _add_title(ws, f"«{object_name}» {format_date(start_date)} — {format_date(end_date)}", len(headers))
 
     ws.cell(row=3, column=1, value="Остаток на начало периода:").font = Font(bold=True)
     _amount_cell(ws, 3, 2, opening)
 
-    _write_transactions(ws, txns, 5, headers[:5])
+    _write_transactions(ws, txns, 5, headers)
 
     last_row = ws.max_row + 1
     ws.cell(row=last_row, column=1, value="Остаток на конец периода:").font = Font(bold=True)
@@ -354,7 +356,7 @@ async def generate_daily_report(object_id: int, object_name: str, date_str: str 
 
     summary = await get_daily_summary(object_id, date_str)
     txns = await get_object_transactions(object_id, date_str, date_str)
-    headers = ["Дата", "Тип операции", "Сумма", "Причина", "Сотрудник"]
+    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
 
     wb = Workbook()
     ws = wb.active

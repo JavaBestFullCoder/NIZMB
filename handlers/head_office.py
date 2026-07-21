@@ -3,21 +3,26 @@ from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 from filters import IsHeadOffice
+from hq_connected import hq_connected
 from keyboards import (
     head_office_menu, objects_inline, object_actions_inline,
     confirm_keyboard, cancel_keyboard, back_keyboard,
-    access_management_kb,
+    access_management_kb, delete_object_inline,
+    confirm_delete_txn_kb, hq_users_inline,
+    connected_manager_menu,
 )
 from database import (
     get_object, get_objects, create_object, delete_object,
     create_transaction, get_object_balance, get_employees,
     code_exists, get_user_by_telegram, create_access_code,
-    get_all_codes_with_users,
+    get_all_codes_with_users, get_transaction_by_id,
+    delete_transaction, get_transfer_link_by_transaction,
+    get_hq_users, delete_user,
 )
-from states import AddObject, AddEmployee, AddExpense, AddHQUser, ReportPeriod
+from states import AddObject, AddEmployee, AddExpense, AddHQUser, ReportPeriod, DeleteOperation, DeleteHQUser
 from services.balance import get_hq_balance_text
 from services.reports import generate_all_objects_report, generate_object_report, generate_object_report_text
-from utils import parse_amount, parse_date, format_amount, format_date, today_str
+from utils import parse_amount, parse_date, format_amount, format_date, format_datetime, today_str, now_str, date_to_dt
 
 router = Router()
 router.message.filter(IsHeadOffice())
@@ -27,13 +32,19 @@ router.callback_query.filter(IsHeadOffice())
 @router.message(F.text == "🔙 Назад")
 async def back_to_menu(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
+    if message.from_user.id in hq_connected:
+        await message.answer("🏢 Меню объекта", reply_markup=connected_manager_menu())
+    else:
+        await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
 
 
 @router.message(F.text == "❌ Отмена")
 async def cancel_hq(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Отменено", reply_markup=head_office_menu())
+    if message.from_user.id in hq_connected:
+        await message.answer("❌ Отменено", reply_markup=connected_manager_menu())
+    else:
+        await message.answer("❌ Отменено", reply_markup=head_office_menu())
 
 
 @router.message(F.text == "📋 Управление объектами")
@@ -108,6 +119,37 @@ async def object_selected(callback: CallbackQuery):
     )
     kb = await object_actions_inline(obj_id)
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+
+@router.callback_query(F.data.startswith("connect_obj_"))
+async def connect_to_object(callback: CallbackQuery):
+    obj_id = int(callback.data.split("_")[2])
+    obj = await get_object(obj_id)
+    if not obj:
+        await callback.answer("Объект не найден", show_alert=True)
+        return
+    hq_connected[callback.from_user.id] = {"object_id": obj_id, "object_name": obj["name"]}
+    await callback.message.edit_text(
+        f"🔗 Подключение к «{obj['name']}»\n\n"
+        f"Вы вошли в интерфейс объекта. Все операции будут записаны от вашего имени (ГО).",
+    )
+    await callback.message.answer(
+        f"🏢 Меню «{obj['name']}»",
+        reply_markup=connected_manager_menu(),
+    )
+
+
+@router.message(F.text == "🔙 Выйти из объекта")
+async def disconnect_from_object(message: Message, state: FSMContext):
+    await state.clear()
+    info = hq_connected.pop(message.from_user.id, None)
+    if info:
+        await message.answer(
+            f"✅ Вы вышли из интерфейса «{info['object_name']}».",
+            reply_markup=head_office_menu(),
+        )
+    else:
+        await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
 
 
 @router.callback_query(F.data.startswith("balance_"))
@@ -227,15 +269,30 @@ _HQ_EXPENSE_LABELS = {
 }
 
 
+_CONNECTED_EXPENSE_LABELS = {
+    "expense": ("💸 Расход", "✅ Расход"),
+    "director_expense": ("👔 Расход Директора", "✅ Расход Директора"),
+    "supplier_payment": ("📦 Оплата поставщика", "✅ Оплата поставщика"),
+}
+
+
 async def _hq_expense_start(message: Message, state: FSMContext, exp_type: str):
-    label, _ = _HQ_EXPENSE_LABELS.get(exp_type, ("Расход", "Расход"))
     await state.update_data(exp_type=exp_type)
     await state.set_state(AddExpense.waiting_for_amount)
-    await message.answer(
-        f"{label}\n\nВведите **сумму** для головного офиса:",
-        reply_markup=cancel_keyboard(),
-        parse_mode="Markdown",
-    )
+    if message.from_user.id in hq_connected:
+        label, _ = _CONNECTED_EXPENSE_LABELS.get(exp_type, ("Расход", "Расход"))
+        await message.answer(
+            f"{label} объекта\n\nВведите **сумму**:",
+            reply_markup=cancel_keyboard(),
+            parse_mode="Markdown",
+        )
+    else:
+        label, _ = _HQ_EXPENSE_LABELS.get(exp_type, ("Расход", "Расход"))
+        await message.answer(
+            f"{label}\n\nВведите **сумму** для головного офиса:",
+            reply_markup=cancel_keyboard(),
+            parse_mode="Markdown",
+        )
 
 
 @router.message(F.text == "💸 Расход")
@@ -286,10 +343,18 @@ async def hq_expense_date(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     user = await get_user_by_telegram(message.from_user.id)
-    date_str = date.strftime("%Y-%m-%d")
+    date_str = date_to_dt(date)
     exp_type = data.get("exp_type", "expense")
-    await create_transaction(
-        object_id=None,
+
+    connected = message.from_user.id in hq_connected
+    obj_id = None
+    if connected:
+        info = hq_connected.get(message.from_user.id)
+        if info:
+            obj_id = info["object_id"]
+
+    txn_id = await create_transaction(
+        object_id=obj_id,
         user_id=user["id"],
         type_=exp_type,
         amount=data["exp_amount"],
@@ -297,13 +362,24 @@ async def hq_expense_date(message: Message, state: FSMContext):
         date_str=date_str,
     )
     await state.clear()
-    _, label_done = _HQ_EXPENSE_LABELS.get(exp_type, ("", "✅ Расход ГО"))
-    await message.answer(
-        f"{label_done} за {format_date(date_str)}:\n"
-        f"Сумма: {format_amount(data['exp_amount'])} сум\n"
-        f"Причина: {data['exp_reason']}",
-        reply_markup=head_office_menu(),
-    )
+    if connected:
+        _, label_done = _CONNECTED_EXPENSE_LABELS.get(exp_type, ("", "✅ Расход"))
+        await message.answer(
+            f"{label_done} за {format_datetime(date_str)}:\n"
+            f"Сумма: {format_amount(data['exp_amount'])} сум\n"
+            f"Причина: {data['exp_reason']}\n"
+            f"🆔 ID: {txn_id}",
+            reply_markup=connected_manager_menu(),
+        )
+    else:
+        _, label_done = _HQ_EXPENSE_LABELS.get(exp_type, ("", "✅ Расход ГО"))
+        await message.answer(
+            f"{label_done} за {format_datetime(date_str)}:\n"
+            f"Сумма: {format_amount(data['exp_amount'])} сум\n"
+            f"Причина: {data['exp_reason']}\n"
+            f"🆔 ID: {txn_id}",
+            reply_markup=head_office_menu(),
+        )
 
 
 @router.message(F.text == "📊 Отчеты за период")
@@ -371,7 +447,8 @@ async def report_end_date(message: Message, state: FSMContext):
         await message.answer(f"❌ Ошибка: {e}")
     finally:
         await msg.delete()
-        await message.answer("🏢 Главное меню", reply_markup=head_office_menu())
+        menu = connected_manager_menu() if message.from_user.id in hq_connected else head_office_menu()
+        await message.answer("🏢 Главное меню", reply_markup=menu)
 
 
 # --- Access management ---
@@ -455,4 +532,138 @@ async def create_code_final(message: Message, state: FSMContext):
 async def cancel_action(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text("❌ Действие отменено.")
+    menu = connected_manager_menu() if callback.from_user.id in hq_connected else head_office_menu()
+    await callback.message.answer("🏢 Главное меню", reply_markup=menu)
+
+
+# --- Delete operation ---
+
+@router.message(F.text == "🗑 Удалить операцию")
+async def delete_operation_start(message: Message, state: FSMContext):
+    kb = await delete_object_inline()
+    await message.answer(
+        "🗑 **Удаление операции**\n\nВыберите **объект**, в котором была операция:",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data.startswith("delop_obj_"))
+async def delete_operation_object(callback: CallbackQuery, state: FSMContext):
+    obj_id = int(callback.data.split("_")[2])
+    obj = await get_object(obj_id)
+    if not obj:
+        await callback.answer("Объект не найден", show_alert=True)
+        return
+    await state.update_data(delop_obj_id=obj_id, delop_obj_name=obj["name"])
+    await state.set_state(DeleteOperation.waiting_for_date)
+    await callback.message.edit_text(
+        f"🗑 Удаление операции\nОбъект: «{obj['name']}»\n\n"
+        f"Введите **дату** операции (ДД.ММ.ГГГГ):",
+        parse_mode="Markdown",
+    )
+
+
+@router.message(DeleteOperation.waiting_for_date)
+async def delete_operation_date(message: Message, state: FSMContext):
+    date = parse_date(message.text)
+    if date is None:
+        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ:")
+        return
+    await state.update_data(delop_date=date.strftime("%Y-%m-%d"))
+    await state.set_state(DeleteOperation.waiting_for_id)
+    await message.answer(
+        "Введите **ID операции** для удаления:",
+        reply_markup=cancel_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(DeleteOperation.waiting_for_id)
+async def delete_operation_id(message: Message, state: FSMContext):
+    try:
+        txn_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ ID должен быть числом. Попробуйте снова:")
+        return
+
+    txn = await get_transaction_by_id(txn_id)
+    if not txn:
+        await message.answer("❌ Операция с таким ID не найдена. Попробуйте снова:")
+        return
+
+    await state.update_data(delop_txn_id=txn_id, delop_txn=txn)
+
+    type_names = {
+        "income": "Приход", "expense": "Расход",
+        "director_expense": "Расход Директора",
+        "supplier_payment": "Оплата поставщика",
+        "transfer_out": "Перевод в офис", "transfer_in": "Перевод из объекта",
+    }
+    txn_type = type_names.get(txn["type"], txn["type"])
+    obj_name = (await get_object(txn["object_id"]))["name"] if txn["object_id"] else "Головной офис"
+
+    await message.answer(
+        f"🔍 **Найдена операция:**\n\n"
+        f"🆔 ID: {txn['id']}\n"
+        f"📅 Дата: {format_datetime(txn['transaction_date'])}\n"
+        f"🏢 Объект: {obj_name}\n"
+        f"📋 Тип: {txn_type}\n"
+        f"💰 Сумма: {format_amount(txn['amount'])} сум\n"
+        f"📝 Причина: {txn.get('reason', '—')}\n\n"
+        f"Удалить эту операцию?",
+        reply_markup=confirm_delete_txn_kb(txn_id),
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data.startswith("confirm_del_txn_"))
+async def delete_operation_execute(callback: CallbackQuery, state: FSMContext):
+    txn_id = int(callback.data.split("_")[3])
+    txn = await get_transaction_by_id(txn_id)
+    if not txn:
+        await callback.message.edit_text("❌ Операция уже удалена или не найдена.")
+        await state.clear()
+        return
+
+    # Cascade delete linked transfers
+    link = await get_transfer_link_by_transaction(txn_id)
+    if link:
+        other_id = link["transfer_in_id"] if link["transfer_out_id"] == txn_id else link["transfer_out_id"]
+        await delete_transaction(other_id)
+        await delete_transaction(txn_id)
+        res = await callback.message.edit_text(
+            f"✅ Операция ID {txn_id} и связанный перевод удалены."
+        )
+    else:
+        await delete_transaction(txn_id)
+        await callback.message.edit_text(
+            f"✅ Операция ID {txn_id} удалена."
+        )
+
+    await state.clear()
+    await callback.message.answer("🏢 Главное меню", reply_markup=head_office_menu())
+
+
+# --- Delete HQ user ---
+
+@router.message(F.text == "👤 Удалить сотрудника ГО")
+async def delete_hq_user_start(message: Message):
+    kb = await hq_users_inline()
+    await message.answer(
+        "👤 **Удаление сотрудника ГО**\n\nВыберите сотрудника для удаления:",
+        reply_markup=kb,
+        parse_mode="Markdown",
+    )
+
+
+@router.callback_query(F.data.startswith("del_hq_user_"))
+async def delete_hq_user_execute(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[3])
+    caller = await get_user_by_telegram(callback.from_user.id)
+    if caller and caller["id"] == user_id:
+        await callback.answer("❌ Нельзя удалить самого себя!", show_alert=True)
+        return
+    await delete_user(user_id)
+    await callback.message.edit_text("✅ Сотрудник ГО удалён.")
     await callback.message.answer("🏢 Главное меню", reply_markup=head_office_menu())

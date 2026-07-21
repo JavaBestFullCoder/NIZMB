@@ -226,6 +226,43 @@ async def delete_object(obj_id: int):
 
 # --- Transactions ---
 
+async def get_transaction_by_id(txn_id: int) -> dict | None:
+    db = await get_db()
+    cursor = await db.execute("SELECT t.*, u.name as user_name FROM transactions t LEFT JOIN users u ON t.user_id = u.id WHERE t.id = ?", (txn_id,))
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
+async def delete_transaction(txn_id: int):
+    db = await get_db()
+    await db.execute("DELETE FROM transactions WHERE id = ?", (txn_id,))
+    await db.commit()
+
+
+async def get_hq_users() -> list[dict]:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM users WHERE role = 'head_office' ORDER BY name")
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def delete_user(user_id: int):
+    db = await get_db()
+    await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    await db.commit()
+
+
+async def get_transfer_link_by_transaction(txn_id: int) -> dict | None:
+    """Find transfer_link where txn_id is either transfer_out_id or transfer_in_id."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM transfer_links WHERE transfer_out_id = ? OR transfer_in_id = ?",
+        (txn_id, txn_id),
+    )
+    row = await cursor.fetchone()
+    return dict(row) if row else None
+
+
 async def create_transaction(object_id: int | None, user_id: int, type_: str, amount: float, date_str: str, reason: str | None = None) -> int:
     db = await get_db()
     cursor = await db.execute(
@@ -251,7 +288,7 @@ async def get_object_transactions(object_id: int, start_date: str, end_date: str
         SELECT t.*, u.name as user_name
         FROM transactions t
         LEFT JOIN users u ON t.user_id = u.id
-        WHERE t.object_id = ? AND t.transaction_date >= ? AND t.transaction_date <= ?
+        WHERE t.object_id = ? AND date(t.transaction_date) >= ? AND date(t.transaction_date) <= ?
     """
     params = [object_id, start_date, end_date]
     if type_:
@@ -272,7 +309,7 @@ async def get_hq_transactions(start_date: str, end_date: str) -> list[dict]:
         LEFT JOIN users u ON t.user_id = u.id
         LEFT JOIN transfer_links tl ON t.id = tl.transfer_in_id
         LEFT JOIN objects o ON tl.source_object_id = o.id
-        WHERE t.object_id IS NULL AND t.transaction_date >= ? AND t.transaction_date <= ?
+        WHERE t.object_id IS NULL AND date(t.transaction_date) >= ? AND date(t.transaction_date) <= ?
         ORDER BY t.transaction_date, t.id
     """, (start_date, end_date))
     rows = await cursor.fetchall()
@@ -284,7 +321,7 @@ async def get_hq_balance_before(date_str: str) -> float:
     cursor = await db.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN type = 'transfer_in' THEN amount ELSE 0 END), 0) -
                COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
-        FROM transactions WHERE object_id IS NULL AND transaction_date < ?
+        FROM transactions WHERE object_id IS NULL AND date(transaction_date) < ?
     """, (date_str,))
     row = await cursor.fetchone()
     return row[0] or 0.0
@@ -297,7 +334,7 @@ async def get_all_objects_transactions(start_date: str, end_date: str) -> list[d
         FROM transactions t
         LEFT JOIN users u ON t.user_id = u.id
         LEFT JOIN objects o ON t.object_id = o.id
-        WHERE t.object_id IS NOT NULL AND t.transaction_date >= ? AND t.transaction_date <= ?
+        WHERE t.object_id IS NOT NULL AND date(t.transaction_date) >= ? AND date(t.transaction_date) <= ?
         ORDER BY t.transaction_date, t.object_id, t.id
     """, (start_date, end_date))
     rows = await cursor.fetchall()
@@ -342,7 +379,7 @@ async def get_daily_summary(object_id: int, date_str: str) -> dict:
     cursor = await db.execute("""
         SELECT type, COALESCE(SUM(amount), 0) as total
         FROM transactions
-        WHERE object_id = ? AND transaction_date = ?
+        WHERE object_id = ? AND date(transaction_date) = ?
         GROUP BY type
     """, (object_id, date_str))
     rows = await cursor.fetchall()
@@ -365,7 +402,7 @@ async def get_object_balance_before(object_id: int, date_str: str) -> float:
     cursor = await db.execute(f"""
         SELECT COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) -
                COALESCE(SUM(CASE WHEN type IN {EXPENSE_TYPES} THEN amount ELSE 0 END), 0)
-        FROM transactions WHERE object_id = ? AND transaction_date < ?
+        FROM transactions WHERE object_id = ? AND date(transaction_date) < ?
     """, (object_id, date_str))
     row = await cursor.fetchone()
     return row[0] or 0.0
@@ -380,7 +417,7 @@ async def get_transfer_links(object_id: int, start_date: str, end_date: str) -> 
         JOIN transactions to_t ON tl.transfer_out_id = to_t.id
         LEFT JOIN users u_from ON to_t.user_id = u_from.id
         JOIN objects o ON tl.source_object_id = o.id
-        WHERE tl.source_object_id = ? AND to_t.transaction_date >= ? AND to_t.transaction_date <= ?
+        WHERE tl.source_object_id = ? AND date(to_t.transaction_date) >= ? AND date(to_t.transaction_date) <= ?
         ORDER BY to_t.transaction_date
     """, (object_id, start_date, end_date))
     rows = await cursor.fetchall()

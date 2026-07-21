@@ -37,3 +37,10 @@ class AddHQUser(StatesGroup):
 
 class DeleteConfirm(StatesGroup):
     waiting = State()
+
+class DeleteOperation(StatesGroup):
+    waiting_for_date = State()
+    waiting_for_id = State()
+
+class DeleteHQUser(StatesGroup):
+    waiting = State()

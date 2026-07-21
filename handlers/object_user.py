@@ -3,7 +3,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from filters import IsObjectUser
-from keyboards import manager_menu, employee_menu, cancel_keyboard, back_keyboard
+from keyboards import manager_menu, employee_menu, connected_manager_menu, cancel_keyboard, back_keyboard
+from hq_connected import hq_connected
 from database import (
     get_user_by_telegram, get_object,
     create_transaction, get_object_balance, link_transfers,
@@ -11,7 +12,7 @@ from database import (
 from states import AddIncome, AddExpense, Transfer, ReportPeriod
 from services.balance import get_object_balance_text, get_daily_summary_text
 from services.reports import generate_object_report_text
-from utils import parse_amount, parse_date, format_amount, format_date, today_str
+from utils import parse_amount, parse_date, format_amount, format_date, format_datetime, today_str, now_str, date_to_dt
 
 router = Router()
 router.message.filter(IsObjectUser())
@@ -19,12 +20,29 @@ router.callback_query.filter(IsObjectUser())
 
 
 def _get_menu(role: str):
+    if role == "head_office":
+        return connected_manager_menu()
     return manager_menu() if role == "manager" else employee_menu()
 
 
-async def _get_user_object(user: dict) -> dict | None:
+async def _resolve_object_id(user: dict, telegram_id: int) -> int | None:
     if user["object_id"]:
-        return await get_object(user["object_id"])
+        return user["object_id"]
+    if user["role"] == "head_office":
+        info = hq_connected.get(telegram_id)
+        if info:
+            return info["object_id"]
+    return None
+
+
+async def _get_user_object(user: dict, telegram_id: int | None = None) -> dict | None:
+    obj_id = user["object_id"]
+    if not obj_id and telegram_id:
+        info = hq_connected.get(telegram_id)
+        if info:
+            obj_id = info["object_id"]
+    if obj_id:
+        return await get_object(obj_id)
     return None
 
 
@@ -77,9 +95,10 @@ async def income_date(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     user = await get_user_by_telegram(message.from_user.id)
-    date_str = date.strftime("%Y-%m-%d")
-    await create_transaction(
-        object_id=user["object_id"],
+    date_str = date_to_dt(date)
+    obj_id = await _resolve_object_id(user, message.from_user.id)
+    txn_id = await create_transaction(
+        object_id=obj_id,
         user_id=user["id"],
         type_="income",
         amount=data["inc_amount"],
@@ -87,7 +106,8 @@ async def income_date(message: Message, state: FSMContext):
     )
     await state.clear()
     await message.answer(
-        f"✅ Приход за {format_date(date_str)}: {format_amount(data['inc_amount'])} сум",
+        f"✅ Приход за {format_datetime(date_str)}: {format_amount(data['inc_amount'])} сум\n"
+        f"🆔 ID: {txn_id}",
         reply_markup=_get_menu(user["role"]),
     )
 
@@ -162,10 +182,11 @@ async def expense_date(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     user = await get_user_by_telegram(message.from_user.id)
-    date_str = date.strftime("%Y-%m-%d")
+    date_str = date_to_dt(date)
     exp_type = data.get("exp_type", "expense")
-    await create_transaction(
-        object_id=user["object_id"],
+    obj_id = await _resolve_object_id(user, message.from_user.id)
+    txn_id = await create_transaction(
+        object_id=obj_id,
         user_id=user["id"],
         type_=exp_type,
         amount=data["exp_amount"],
@@ -175,9 +196,10 @@ async def expense_date(message: Message, state: FSMContext):
     await state.clear()
     _, label_done = _EXPENSE_LABELS.get(exp_type, ("", "✅ Расход"))
     await message.answer(
-        f"{label_done} за {format_date(date_str)}:\n"
+        f"{label_done} за {format_datetime(date_str)}:\n"
         f"Сумма: {format_amount(data['exp_amount'])} сум\n"
-        f"Причина: {data['exp_reason']}",
+        f"Причина: {data['exp_reason']}\n"
+        f"🆔 ID: {txn_id}",
         reply_markup=_get_menu(user["role"]),
     )
 
@@ -186,11 +208,12 @@ async def expense_date(message: Message, state: FSMContext):
 @router.message(F.text == "🔄 Перевод в офис")
 async def transfer_start(message: Message, state: FSMContext):
     user = await get_user_by_telegram(message.from_user.id)
-    obj = await _get_user_object(user)
+    obj = await _get_user_object(user, message.from_user.id)
     if not obj:
         await message.answer("❌ Объект не найден.")
         return
-    balance = await get_object_balance(user["object_id"])
+    obj_id = await _resolve_object_id(user, message.from_user.id)
+    balance = await get_object_balance(obj_id)
     if balance <= 0:
         await message.answer(f"❌ На счету объекта «{obj['name']}» нет средств. Текущий баланс: {format_amount(balance)} сум")
         return
@@ -246,7 +269,7 @@ async def transfer_confirm(callback: CallbackQuery, state: FSMContext):
     user = await get_user_by_telegram(callback.from_user.id)
     amount = data["transfer_amount"]
     obj_id = data["transfer_obj_id"]
-    today = today_str()
+    now = now_str()
     user_id = user["id"]
 
     out_id = await create_transaction(
@@ -254,14 +277,14 @@ async def transfer_confirm(callback: CallbackQuery, state: FSMContext):
         user_id=user_id,
         type_="transfer_out",
         amount=amount,
-        date_str=today,
+        date_str=now,
     )
     in_id = await create_transaction(
         object_id=None,
         user_id=user_id,
         type_="transfer_in",
         amount=amount,
-        date_str=today,
+        date_str=now,
     )
     await link_transfers(out_id, in_id, obj_id)
     await state.clear()
@@ -269,7 +292,8 @@ async def transfer_confirm(callback: CallbackQuery, state: FSMContext):
         f"✅ Перевод выполнен!\n\n"
         f"Объект: «{data['transfer_obj_name']}»\n"
         f"Сумма: {format_amount(amount)} сум\n"
-        f"Дата: {format_date(today)}"
+        f"Дата: {format_datetime(now)}\n"
+        f"🆔 ID перевода: {out_id}"
     )
     await callback.message.answer("🏢 Меню", reply_markup=_get_menu(user["role"]))
 
@@ -289,7 +313,7 @@ async def transfer_cancel(callback: CallbackQuery, state: FSMContext):
 @router.message(F.text == "📊 Отчеты")
 async def object_report_start(message: Message, state: FSMContext):
     user = await get_user_by_telegram(message.from_user.id)
-    obj = await _get_user_object(user)
+    obj = await _get_user_object(user, message.from_user.id)
     if not obj:
         await message.answer("❌ Объект не найден.")
         return

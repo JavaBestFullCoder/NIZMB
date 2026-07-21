@@ -35,9 +35,25 @@ def today_str() -> str:
     return datetime.now(TZ).strftime("%Y-%m-%d")
 
 
+def now_str() -> str:
+    return datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def date_to_dt(date_obj: date) -> str:
+    return date_obj.strftime("%Y-%m-%d") + " " + datetime.now(TZ).strftime("%H:%M:%S")
+
+
 def format_date(date_str: str) -> str:
-    d = datetime.strptime(date_str, "%Y-%m-%d")
+    if " " in date_str:
+        d = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
+    else:
+        d = datetime.strptime(date_str, "%Y-%m-%d")
     return d.strftime("%d.%m.%Y")
+
+
+def format_datetime(dt_str: str) -> str:
+    d = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
+    return d.strftime("%d.%m.%Y %H:%M")
 
 
 def format_amount(amount: float) -> str:
