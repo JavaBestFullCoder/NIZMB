@@ -88,7 +88,7 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
 
 
 def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
-    ws = wb.create_sheet(title="Удаленные операции")
+    ws = wb.create_sheet(title="Удаленные")
     del_headers = ["ID", "Дата", "Время", "Тип", "Сумма", "Причина", "Сотрудник", "Объект", "Дата удаления", "Кто удалил", "Причина удаления"]
     _add_title(ws, title, len(del_headers))
 

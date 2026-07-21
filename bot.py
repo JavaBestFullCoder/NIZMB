@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    BOT_TOKEN = "6702099427:AAFzH_TnVZEqStL7EuFL9dI9iu5fVNJ3gOM"
-
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
     await init_db()

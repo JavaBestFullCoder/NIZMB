@@ -1,6 +1,9 @@
+import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
+
+logger = logging.getLogger(__name__)
 
 from filters import IsHeadOffice
 from hq_connected import hq_connected
@@ -236,7 +239,8 @@ async def delete_object_confirm(callback: CallbackQuery, state: FSMContext):
         f"⚠️ **Удалить объект «{obj['name']}»?**\n\n"
         f"Будут удалены:\n"
         f"• Все сотрудники объекта\n"
-        f"• Все транзакции\n\n"
+        f"• Коды доступа\n\n"
+        f"Транзакции и отчёты останутся в базе.\n"
         f"Это действие **необратимо**.",
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("delete_object", str(obj_id)),
@@ -248,8 +252,12 @@ async def delete_object_execute(callback: CallbackQuery, state: FSMContext):
     obj_id = int(callback.data.split("_")[3])
     obj = await get_object(obj_id)
     if obj:
-        await delete_object(obj_id)
-        await callback.message.edit_text(f"✅ Объект «{obj['name']}» удален.")
+        try:
+            await delete_object(obj_id)
+            await callback.message.edit_text(f"✅ Объект «{obj['name']}» удален.")
+        except Exception as e:
+            await callback.message.edit_text(f"❌ Ошибка при удалении объекта: {e}")
+            logger.exception("Ошибка удаления объекта")
     else:
         await callback.message.edit_text("❌ Объект не найден.")
     await state.clear()
@@ -601,7 +609,11 @@ async def delete_operation_id(message: Message, state: FSMContext):
         "transfer_out": "Перевод в офис", "transfer_in": "Перевод из объекта",
     }
     txn_type = type_names.get(txn["type"], txn["type"])
-    obj_name = (await get_object(txn["object_id"]))["name"] if txn["object_id"] else "Головной офис"
+    if txn["object_id"]:
+        obj = await get_object(txn["object_id"])
+        obj_name = obj["name"] if obj else "Удалённый объект"
+    else:
+        obj_name = "Головной офис"
 
     await message.answer(
         f"🔍 **Найдена операция:**\n\n"
@@ -619,6 +631,10 @@ async def delete_operation_id(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("confirm_del_txn_"))
 async def delete_operation_reason_start(callback: CallbackQuery, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state not in (None, DeleteOperation.waiting_for_id.state):
+        await callback.answer("⚠️ Сначала завершите текущее действие", show_alert=True)
+        return
     txn_id = int(callback.data.split("_")[3])
     txn = await get_transaction_by_id(txn_id)
     if not txn:
@@ -645,26 +661,38 @@ async def delete_operation_execute(message: Message, state: FSMContext):
     txn_id = data["delop_confirm_txn_id"]
     txn = data["delop_confirm_txn"]
 
-    # Save deleted operation record
-    user = await get_user_by_telegram(message.from_user.id)
-    await save_deleted_operation(txn, user["id"], user.get("name", ""), delete_reason)
+    try:
+        user = await get_user_by_telegram(message.from_user.id)
+        deleted_by_user_id = user["id"]
+        deleted_by_name = user.get("name", "")
 
-    # Cascade delete linked transfers
-    link = await get_transfer_link_by_transaction(txn_id)
-    if link:
-        other_id = link["transfer_in_id"] if link["transfer_out_id"] == txn_id else link["transfer_out_id"]
-        await delete_transaction(other_id)
-        await delete_transaction(txn_id)
-        await message.answer(
-            f"✅ Операция ID {txn_id} и связанный перевод удалены.\n"
-            f"Причина: {delete_reason}"
-        )
-    else:
-        await delete_transaction(txn_id)
-        await message.answer(
-            f"✅ Операция ID {txn_id} удалена.\n"
-            f"Причина: {delete_reason}"
-        )
+        # Save deleted operation record for the primary transaction
+        await save_deleted_operation(txn, deleted_by_user_id, deleted_by_name, delete_reason)
+
+        # Cascade delete linked transfers
+        link = await get_transfer_link_by_transaction(txn_id)
+        if link:
+            other_id = link["transfer_in_id"] if link["transfer_out_id"] == txn_id else link["transfer_out_id"]
+            # Save the other side too (fetch it first)
+            other_txn = await get_transaction_by_id(other_id)
+            if other_txn:
+                await save_deleted_operation(other_txn, deleted_by_user_id, deleted_by_name, delete_reason)
+            # delete_transaction now auto-cleans transfer_links
+            await delete_transaction(other_id)
+            await delete_transaction(txn_id)
+            await message.answer(
+                f"✅ Операция ID {txn_id} и связанный перевод удалены.\n"
+                f"Причина: {delete_reason}"
+            )
+        else:
+            await delete_transaction(txn_id)
+            await message.answer(
+                f"✅ Операция ID {txn_id} удалена.\n"
+                f"Причина: {delete_reason}"
+            )
+    except Exception as e:
+        logger.exception("Ошибка удаления операции")
+        await message.answer(f"❌ Ошибка при удалении: {e}")
 
     await state.clear()
     menu = connected_manager_menu() if message.from_user.id in hq_connected else head_office_menu()

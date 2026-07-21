@@ -235,6 +235,8 @@ async def create_object(name: str) -> int:
 
 async def delete_object(obj_id: int):
     db = await get_db()
+    await db.execute("UPDATE transactions SET object_id = NULL WHERE object_id = ?", (obj_id,))
+    await db.execute("UPDATE transfer_links SET source_object_id = NULL WHERE source_object_id = ?", (obj_id,))
     await db.execute("DELETE FROM access_codes WHERE object_id = ?", (obj_id,))
     await db.execute("DELETE FROM users WHERE object_id = ?", (obj_id,))
     await db.execute("DELETE FROM objects WHERE id = ?", (obj_id,))
@@ -252,6 +254,7 @@ async def get_transaction_by_id(txn_id: int) -> dict | None:
 
 async def delete_transaction(txn_id: int):
     db = await get_db()
+    await db.execute("DELETE FROM transfer_links WHERE transfer_out_id = ? OR transfer_in_id = ?", (txn_id, txn_id))
     await db.execute("DELETE FROM transactions WHERE id = ?", (txn_id,))
     await db.commit()
 
@@ -265,6 +268,7 @@ async def get_hq_users() -> list[dict]:
 
 async def delete_user(user_id: int):
     db = await get_db()
+    await db.execute("UPDATE transactions SET user_id = NULL WHERE user_id = ?", (user_id,))
     await db.execute("DELETE FROM users WHERE id = ?", (user_id,))
     await db.commit()
 
@@ -302,9 +306,10 @@ async def link_transfers(transfer_out_id: int, transfer_in_id: int, source_objec
 async def get_object_transactions(object_id: int, start_date: str, end_date: str, type_: str | None = None) -> list[dict]:
     db = await get_db()
     query = """
-        SELECT t.*, u.name as user_name
+        SELECT t.*, u.name as user_name, o.name as object_name
         FROM transactions t
         LEFT JOIN users u ON t.user_id = u.id
+        LEFT JOIN objects o ON t.object_id = o.id
         WHERE t.object_id = ? AND date(t.transaction_date) >= ? AND date(t.transaction_date) <= ?
     """
     params = [object_id, start_date, end_date]
