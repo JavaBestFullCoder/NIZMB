@@ -122,7 +122,7 @@ def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
         ws.cell(row=row, column=6).border = THIN_BORDER
         ws.cell(row=row, column=7, value=d.get("original_user_name", "") or "").font = RED_DATA
         ws.cell(row=row, column=7).border = THIN_BORDER
-        ws.cell(row=row, column=8, value=d.get("object_name", "") or "").font = RED_DATA
+        ws.cell(row=row, column=8, value=d.get("object_name") or "Головной офис").font = RED_DATA
         ws.cell(row=row, column=8).border = THIN_BORDER
         del_str = d["deleted_at"]
         ws.cell(row=row, column=9, value=format_date(del_str[:10])).font = RED_DATA
