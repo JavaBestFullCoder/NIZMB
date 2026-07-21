@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter
 
 from config import REPORTS_DIR
 from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, get_deleted_operations, EXPENSE_TYPES
-from utils import format_date, format_datetime, format_amount, today_str, TZ
+from utils import format_date, format_amount, today_str, TZ
 
 THIN_BORDER = Border(
     left=Side(style="thin"),
@@ -89,7 +89,7 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
 
 def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
     ws = wb.create_sheet(title="Удаленные")
-    del_headers = ["ID", "Дата", "Время", "Тип", "Сумма", "Причина", "Сотрудник", "Объект", "Дата удаления", "Кто удалил", "Причина удаления"]
+    del_headers = ["ID", "Дата", "Время", "Тип", "Сумма", "Причина", "Сотрудник", "Объект", "Дата удаления", "Время удаления", "Кто удалил", "Причина удаления"]
     _add_title(ws, title, len(del_headers))
 
     for col_idx, h in enumerate(del_headers, 1):
@@ -112,9 +112,11 @@ def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
         ws.cell(row=row, column=6, value=d.get("reason", "") or "").border = THIN_BORDER
         ws.cell(row=row, column=7, value=d.get("original_user_name", "") or "").border = THIN_BORDER
         ws.cell(row=row, column=8, value=d.get("object_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=9, value=format_datetime(d["deleted_at"])).border = THIN_BORDER
-        ws.cell(row=row, column=10, value=d.get("deleted_by_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=11, value=d.get("delete_reason", "") or "").border = THIN_BORDER
+        del_str = d["deleted_at"]
+        ws.cell(row=row, column=9, value=format_date(del_str[:10])).border = THIN_BORDER
+        ws.cell(row=row, column=10, value=del_str[11:19] if len(del_str) > 10 else "").border = THIN_BORDER
+        ws.cell(row=row, column=11, value=d.get("deleted_by_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=12, value=d.get("delete_reason", "") or "").border = THIN_BORDER
         row += 1
 
     _auto_width(ws, len(del_headers))

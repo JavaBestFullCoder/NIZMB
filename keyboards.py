@@ -105,6 +105,7 @@ def access_management_kb() -> InlineKeyboardMarkup:
 async def delete_object_inline() -> InlineKeyboardMarkup:
     objects = await get_objects()
     builder = InlineKeyboardBuilder()
+    builder.button(text="🏢 Головной офис", callback_data="delop_obj_0")
     for obj in objects:
         builder.button(text=obj["name"], callback_data=f"delop_obj_{obj['id']}")
     builder.adjust(1)

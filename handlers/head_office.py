@@ -559,6 +559,15 @@ async def delete_operation_start(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("delop_obj_"))
 async def delete_operation_object(callback: CallbackQuery, state: FSMContext):
     obj_id = int(callback.data.split("_")[2])
+    if obj_id == 0:
+        await state.update_data(delop_obj_id=0, delop_obj_name="Головной офис")
+        await state.set_state(DeleteOperation.waiting_for_date)
+        await callback.message.edit_text(
+            "🗑 Удаление операции\nОбъект: **Головной офис**\n\n"
+            "Введите **дату** операции (ДД.ММ.ГГГГ):",
+            parse_mode="Markdown",
+        )
+        return
     obj = await get_object(obj_id)
     if not obj:
         await callback.answer("Объект не найден", show_alert=True)
