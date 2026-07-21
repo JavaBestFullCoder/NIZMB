@@ -270,7 +270,8 @@ async def delete_object_confirm(callback: CallbackQuery, state: FSMContext):
         f"Будут удалены:\n"
         f"• Все сотрудники объекта\n"
         f"• Коды доступа\n\n"
-        f"Транзакции и отчёты останутся в базе.\n"
+        f"Транзакции и история сохранятся. Объект будет скрыт из меню,\n"
+        f"но отчёты за период его работы останутся доступны.\n"
         f"Это действие **необратимо**.",
         parse_mode="Markdown",
         reply_markup=confirm_keyboard("delete_object", str(obj_id)),

@@ -5,7 +5,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 from config import REPORTS_DIR
-from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, get_deleted_operations, EXPENSE_TYPES
+from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_all_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, get_deleted_operations, EXPENSE_TYPES
 from utils import format_date, format_amount, today_str, TZ
 
 THIN_BORDER = Border(
@@ -191,7 +191,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
 
     wb = Workbook()
     wb.remove(wb.active)
-    objects = await get_objects()
+    objects = await get_all_objects()
     headers = ["ID", "Дата", "Время", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
 
     entity_data = []

@@ -102,6 +102,15 @@ async def init_db():
     except Exception:
         pass
 
+    # Add active column to objects if missing (migration)
+    try:
+        cursor = await db.execute("PRAGMA table_info(objects)")
+        cols = {row["name"] for row in await cursor.fetchall()}
+        if "active" not in cols:
+            await db.execute("ALTER TABLE objects ADD COLUMN active INTEGER NOT NULL DEFAULT 1")
+    except Exception:
+        pass
+
     await db.execute("""
         CREATE TABLE IF NOT EXISTS deleted_operations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -228,6 +237,21 @@ async def get_objects() -> list[dict]:
         SELECT o.*, COUNT(u.id) as user_count
         FROM objects o
         LEFT JOIN users u ON u.object_id = o.id
+        WHERE o.active = 1
+        GROUP BY o.id
+        ORDER BY o.name
+    """)
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_all_objects() -> list[dict]:
+    """Returns all objects including inactive (deleted) ones."""
+    db = await get_db()
+    cursor = await db.execute("""
+        SELECT o.*, COUNT(u.id) as user_count
+        FROM objects o
+        LEFT JOIN users u ON u.object_id = o.id
         GROUP BY o.id
         ORDER BY o.name
     """)
@@ -251,11 +275,9 @@ async def create_object(name: str) -> int:
 
 async def delete_object(obj_id: int):
     db = await get_db()
-    await db.execute("UPDATE transactions SET object_id = NULL WHERE object_id = ?", (obj_id,))
-    await db.execute("UPDATE transfer_links SET source_object_id = NULL WHERE source_object_id = ?", (obj_id,))
     await db.execute("DELETE FROM access_codes WHERE object_id = ?", (obj_id,))
     await db.execute("DELETE FROM users WHERE object_id = ?", (obj_id,))
-    await db.execute("DELETE FROM objects WHERE id = ?", (obj_id,))
+    await db.execute("UPDATE objects SET active = 0 WHERE id = ?", (obj_id,))
     await db.commit()
 
 
