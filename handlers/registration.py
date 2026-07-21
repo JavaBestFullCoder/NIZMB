@@ -4,7 +4,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from config import HEAD_OFFICE_CODE
-from database import resolve_code, get_user_by_telegram, login_user, update_user_name
+from database import resolve_code, get_user_by_telegram, login_user, update_user_name, disconnect_user
 from states import Registration
 from keyboards import head_office_menu, manager_menu, employee_menu
 from utils import today_str
@@ -21,6 +21,20 @@ async def cmd_start(message: Message, state: FSMContext):
     await state.set_state(Registration.waiting_for_code)
     await message.answer(
         "👋 Добро пожаловать!\n\nВведите ваш код доступа:"
+    )
+
+
+@router.message(Command("out"))
+async def cmd_out(message: Message, state: FSMContext):
+    user = await get_user_by_telegram(message.from_user.id)
+    if not user:
+        await message.answer("❌ Вы не авторизованы. Используйте /start для входа.")
+        return
+    await disconnect_user(message.from_user.id)
+    await state.clear()
+    await message.answer(
+        "👋 Вы вышли из профиля.\n\n"
+        "Используйте /start и введите код доступа для повторного входа."
     )
 
 

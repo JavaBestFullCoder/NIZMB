@@ -190,6 +190,12 @@ async def update_user_name(telegram_id: int, name: str):
     await db.commit()
 
 
+async def disconnect_user(telegram_id: int):
+    db = await get_db()
+    await db.execute("UPDATE users SET telegram_id = NULL WHERE telegram_id = ?", (telegram_id,))
+    await db.commit()
+
+
 async def get_user_by_telegram(telegram_id: int) -> dict | None:
     db = await get_db()
     cursor = await db.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
