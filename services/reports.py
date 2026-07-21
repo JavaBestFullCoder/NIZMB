@@ -98,7 +98,7 @@ def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
 
     for col_idx, h in enumerate(del_headers, 1):
         cell = ws.cell(row=2, column=col_idx, value=h)
-        cell.font = Font(bold=True, color="FFFFFF", size=11)
+        cell.font = Font(bold=True, color="000000", size=11)
         cell.fill = DEL_HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = THIN_BORDER
