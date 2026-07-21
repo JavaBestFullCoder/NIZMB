@@ -41,6 +41,7 @@ class DeleteConfirm(StatesGroup):
 class DeleteOperation(StatesGroup):
     waiting_for_date = State()
     waiting_for_id = State()
+    waiting_for_reason = State()
 
 class DeleteHQUser(StatesGroup):
     waiting = State()

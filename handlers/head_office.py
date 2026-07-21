@@ -17,7 +17,7 @@ from database import (
     code_exists, get_user_by_telegram, create_access_code,
     get_all_codes_with_users, get_transaction_by_id,
     delete_transaction, get_transfer_link_by_transaction,
-    get_hq_users, delete_user,
+    get_hq_users, delete_user, save_deleted_operation,
 )
 from states import AddObject, AddEmployee, AddExpense, AddHQUser, ReportPeriod, DeleteOperation, DeleteHQUser
 from services.balance import get_hq_balance_text
@@ -618,13 +618,36 @@ async def delete_operation_id(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("confirm_del_txn_"))
-async def delete_operation_execute(callback: CallbackQuery, state: FSMContext):
+async def delete_operation_reason_start(callback: CallbackQuery, state: FSMContext):
     txn_id = int(callback.data.split("_")[3])
     txn = await get_transaction_by_id(txn_id)
     if not txn:
         await callback.message.edit_text("❌ Операция уже удалена или не найдена.")
         await state.clear()
         return
+    await state.update_data(delop_confirm_txn_id=txn_id, delop_confirm_txn=txn)
+    await state.set_state(DeleteOperation.waiting_for_reason)
+    await callback.message.edit_text(
+        "🗑 **Подтверждение удаления**\n\n"
+        "Введите **причину удаления**:",
+        parse_mode="Markdown",
+    )
+
+
+@router.message(DeleteOperation.waiting_for_reason, IsHeadOffice())
+async def delete_operation_execute(message: Message, state: FSMContext):
+    delete_reason = message.text.strip()
+    if len(delete_reason) < 2:
+        await message.answer("❌ Причина должна быть минимум 2 символа. Введите снова:")
+        return
+
+    data = await state.get_data()
+    txn_id = data["delop_confirm_txn_id"]
+    txn = data["delop_confirm_txn"]
+
+    # Save deleted operation record
+    user = await get_user_by_telegram(message.from_user.id)
+    await save_deleted_operation(txn, user["id"], user.get("name", ""), delete_reason)
 
     # Cascade delete linked transfers
     link = await get_transfer_link_by_transaction(txn_id)
@@ -632,17 +655,20 @@ async def delete_operation_execute(callback: CallbackQuery, state: FSMContext):
         other_id = link["transfer_in_id"] if link["transfer_out_id"] == txn_id else link["transfer_out_id"]
         await delete_transaction(other_id)
         await delete_transaction(txn_id)
-        res = await callback.message.edit_text(
-            f"✅ Операция ID {txn_id} и связанный перевод удалены."
+        await message.answer(
+            f"✅ Операция ID {txn_id} и связанный перевод удалены.\n"
+            f"Причина: {delete_reason}"
         )
     else:
         await delete_transaction(txn_id)
-        await callback.message.edit_text(
-            f"✅ Операция ID {txn_id} удалена."
+        await message.answer(
+            f"✅ Операция ID {txn_id} удалена.\n"
+            f"Причина: {delete_reason}"
         )
 
     await state.clear()
-    await callback.message.answer("🏢 Главное меню", reply_markup=head_office_menu())
+    menu = connected_manager_menu() if message.from_user.id in hq_connected else head_office_menu()
+    await message.answer("🏢 Главное меню", reply_markup=menu)
 
 
 # --- Delete HQ user ---

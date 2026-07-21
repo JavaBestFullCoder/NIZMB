@@ -5,7 +5,7 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 from config import REPORTS_DIR
-from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, EXPENSE_TYPES
+from database import get_all_objects_transactions, get_hq_transactions, get_objects, get_object_transactions, get_object_balance_before, get_object, get_hq_balance_before, get_deleted_operations, EXPENSE_TYPES
 from utils import format_date, format_datetime, format_amount, today_str, TZ
 
 THIN_BORDER = Border(
@@ -70,19 +70,54 @@ def _write_transactions(ws, transactions, start_row: int, headers: list[str]):
 
     for t in transactions:
         ws.cell(row=row, column=1, value=t["id"]).border = THIN_BORDER
-        ws.cell(row=row, column=2, value=format_datetime(t["transaction_date"])).border = THIN_BORDER
-        ws.cell(row=row, column=3, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
+        dt_str = t["transaction_date"]
+        ws.cell(row=row, column=2, value=format_date(dt_str[:10])).border = THIN_BORDER
+        ws.cell(row=row, column=3, value=dt_str[11:19] if len(dt_str) > 10 else "").border = THIN_BORDER
+        ws.cell(row=row, column=4, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        cell = _amount_cell(ws, row, 4, amount_val)
+        cell = _amount_cell(ws, row, 5, amount_val)
         if t["type"] in EXPENSE_TYPES:
             cell.font = Font(color="FF0000")
         elif t["type"] in ("income", "transfer_in"):
             cell.font = Font(color="008000")
-        ws.cell(row=row, column=5, value=t.get("reason", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=6, value=t.get("user_name", "") or "").border = THIN_BORDER
-        ws.cell(row=row, column=7, value=t.get("object_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=6, value=t.get("reason", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=7, value=t.get("user_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=8, value=t.get("object_name", "") or "").border = THIN_BORDER
         row += 1
     return row
+
+
+def _write_deleted_operations_sheet(wb, deleted_ops, title: str):
+    ws = wb.create_sheet(title="Удаленные операции")
+    del_headers = ["ID", "Дата", "Время", "Тип", "Сумма", "Причина", "Сотрудник", "Объект", "Дата удаления", "Кто удалил", "Причина удаления"]
+    _add_title(ws, title, len(del_headers))
+
+    for col_idx, h in enumerate(del_headers, 1):
+        ws.cell(row=2, column=col_idx, value=h)
+    _style_header(ws, 2, len(del_headers))
+
+    row = 3
+    for d in deleted_ops:
+        ws.cell(row=row, column=1, value=d["original_id"]).border = THIN_BORDER
+        dt_str = d["transaction_date"]
+        ws.cell(row=row, column=2, value=format_date(dt_str[:10])).border = THIN_BORDER
+        ws.cell(row=row, column=3, value=dt_str[11:19] if len(dt_str) > 10 else "").border = THIN_BORDER
+        ws.cell(row=row, column=4, value=TYPE_NAMES.get(d["type"], d["type"])).border = THIN_BORDER
+        amount_val = -d["amount"] if d["type"] in EXPENSE_TYPES else d["amount"]
+        cell = _amount_cell(ws, row, 5, amount_val)
+        if d["type"] in EXPENSE_TYPES:
+            cell.font = Font(color="FF0000")
+        elif d["type"] in ("income", "transfer_in"):
+            cell.font = Font(color="008000")
+        ws.cell(row=row, column=6, value=d.get("reason", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=7, value=d.get("original_user_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=8, value=d.get("object_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=9, value=format_datetime(d["deleted_at"])).border = THIN_BORDER
+        ws.cell(row=row, column=10, value=d.get("deleted_by_name", "") or "").border = THIN_BORDER
+        ws.cell(row=row, column=11, value=d.get("delete_reason", "") or "").border = THIN_BORDER
+        row += 1
+
+    _auto_width(ws, len(del_headers))
 
 
 def _balance_as_of(object_id: int, transactions: list[dict], date_str: str, opening: float) -> float:
@@ -139,7 +174,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     wb = Workbook()
     wb.remove(wb.active)
     objects = await get_objects()
-    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
+    headers = ["ID", "Дата", "Время", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
 
     entity_data = []
 
@@ -171,7 +206,7 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         _auto_width(ws, len(headers))
 
     # HQ sheet
-    hq_headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
+    hq_headers = ["ID", "Дата", "Время", "Тип операции", "Сумма", "Причина", "Сотрудник", "Источник"]
     ws_hq = wb.create_sheet(title="Головной офис")
     hq_txns = await get_hq_transactions(start_date, end_date)
     hq_opening = await get_hq_balance_before(start_date)
@@ -195,17 +230,19 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
     r = hq_data_row + 1
     for t in hq_txns:
         ws_hq.cell(row=r, column=1, value=t["id"]).border = THIN_BORDER
-        ws_hq.cell(row=r, column=2, value=format_datetime(t["transaction_date"])).border = THIN_BORDER
-        ws_hq.cell(row=r, column=3, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
+        dt_str = t["transaction_date"]
+        ws_hq.cell(row=r, column=2, value=format_date(dt_str[:10])).border = THIN_BORDER
+        ws_hq.cell(row=r, column=3, value=dt_str[11:19] if len(dt_str) > 10 else "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=4, value=TYPE_NAMES.get(t["type"], t["type"])).border = THIN_BORDER
         amount_val = -t["amount"] if t["type"] in EXPENSE_TYPES else t["amount"]
-        cell = _amount_cell(ws_hq, r, 4, amount_val)
+        cell = _amount_cell(ws_hq, r, 5, amount_val)
         if t["type"] in EXPENSE_TYPES:
             cell.font = Font(color="FF0000")
         elif t["type"] == "transfer_in":
             cell.font = Font(color="008000")
-        ws_hq.cell(row=r, column=5, value=t.get("reason", "") or "").border = THIN_BORDER
-        ws_hq.cell(row=r, column=6, value=t.get("user_name", "") or "").border = THIN_BORDER
-        ws_hq.cell(row=r, column=7, value=t.get("source_object_name", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=6, value=t.get("reason", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=7, value=t.get("user_name", "") or "").border = THIN_BORDER
+        ws_hq.cell(row=r, column=8, value=t.get("source_object_name", "") or "").border = THIN_BORDER
         r += 1
 
     last_row = ws_hq.max_row + 1
@@ -307,6 +344,12 @@ async def generate_all_objects_report(start_date: str, end_date: str) -> str:
         col += 1
 
     _auto_width(ws, num_cols)
+
+    # Deleted operations sheet
+    deleted_ops = await get_deleted_operations(start_date=start_date, end_date=end_date)
+    if deleted_ops:
+        _write_deleted_operations_sheet(wb, deleted_ops, f"Удаленные операции {format_date(start_date)} — {format_date(end_date)}")
+
     wb.save(filepath)
     return filepath
 
@@ -326,7 +369,7 @@ async def generate_object_report(object_id: int, object_name: str, start_date: s
     ws = wb.active
     ws.title = object_name[:31]
 
-    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
+    headers = ["ID", "Дата", "Время", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
     _add_title(ws, f"«{object_name}» {format_date(start_date)} — {format_date(end_date)}", len(headers))
 
     ws.cell(row=3, column=1, value="Остаток на начало периода:").font = Font(bold=True)
@@ -339,6 +382,12 @@ async def generate_object_report(object_id: int, object_name: str, start_date: s
     _amount_cell(ws, last_row, 2, closing)
 
     _auto_width(ws, len(headers))
+
+    # Deleted operations sheet
+    del_ops = await get_deleted_operations(object_id=object_id, start_date=start_date, end_date=end_date)
+    if del_ops:
+        _write_deleted_operations_sheet(wb, del_ops, f"Удаленные операции «{object_name}» {format_date(start_date)} — {format_date(end_date)}")
+
     wb.save(filepath)
     return filepath
 
@@ -356,7 +405,7 @@ async def generate_daily_report(object_id: int, object_name: str, date_str: str 
 
     summary = await get_daily_summary(object_id, date_str)
     txns = await get_object_transactions(object_id, date_str, date_str)
-    headers = ["ID", "Дата", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
+    headers = ["ID", "Дата", "Время", "Тип операции", "Сумма", "Причина", "Сотрудник", "Объект"]
 
     wb = Workbook()
     ws = wb.active
@@ -382,6 +431,12 @@ async def generate_daily_report(object_id: int, object_name: str, date_str: str 
     _amount_cell(ws, r, 2, summary["closing"])
 
     _auto_width(ws, len(headers))
+
+    # Deleted operations sheet
+    del_ops = await get_deleted_operations(object_id=object_id, start_date=date_str, end_date=date_str)
+    if del_ops:
+        _write_deleted_operations_sheet(wb, del_ops, f"Удаленные операции «{object_name}» за {format_date(date_str)}")
+
     wb.save(filepath)
     return filepath
 

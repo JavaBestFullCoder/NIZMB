@@ -1,5 +1,6 @@
 import aiosqlite
-from config import DB_PATH
+from datetime import datetime
+from config import DB_PATH, TZ
 
 _db: aiosqlite.Connection | None = None
 
@@ -89,6 +90,24 @@ async def init_db():
             transfer_in_id INTEGER NOT NULL REFERENCES transactions(id),
             source_object_id INTEGER REFERENCES objects(id),
             created_at TEXT DEFAULT (datetime('now'))
+        );
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS deleted_operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_id INTEGER NOT NULL,
+            object_id INTEGER,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            reason TEXT,
+            transaction_date TEXT NOT NULL,
+            created_at TEXT,
+            original_user_name TEXT,
+            deleted_by_user_id INTEGER,
+            deleted_by_name TEXT,
+            deleted_at TEXT NOT NULL,
+            delete_reason TEXT NOT NULL
         );
     """)
     await db.commit()
@@ -217,8 +236,6 @@ async def create_object(name: str) -> int:
 async def delete_object(obj_id: int):
     db = await get_db()
     await db.execute("DELETE FROM access_codes WHERE object_id = ?", (obj_id,))
-    await db.execute("DELETE FROM transactions WHERE object_id = ?", (obj_id,))
-    await db.execute("DELETE FROM transfer_links WHERE source_object_id = ?", (obj_id,))
     await db.execute("DELETE FROM users WHERE object_id = ?", (obj_id,))
     await db.execute("DELETE FROM objects WHERE id = ?", (obj_id,))
     await db.commit()
@@ -312,6 +329,46 @@ async def get_hq_transactions(start_date: str, end_date: str) -> list[dict]:
         WHERE t.object_id IS NULL AND date(t.transaction_date) >= ? AND date(t.transaction_date) <= ?
         ORDER BY t.transaction_date, t.id
     """, (start_date, end_date))
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def save_deleted_operation(txn: dict, deleted_by_user_id: int, deleted_by_name: str, delete_reason: str):
+    db = await get_db()
+    now = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    await db.execute(
+        """INSERT INTO deleted_operations
+           (original_id, object_id, type, amount, reason, transaction_date, created_at,
+            original_user_name, deleted_by_user_id, deleted_by_name, deleted_at, delete_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            txn["id"], txn.get("object_id"), txn["type"], txn["amount"],
+            txn.get("reason"), txn["transaction_date"], txn.get("created_at"),
+            txn.get("user_name"), deleted_by_user_id, deleted_by_name,
+            now, delete_reason,
+        ),
+    )
+    await db.commit()
+
+
+async def get_deleted_operations(object_id: int | None = None, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    db = await get_db()
+    conditions = []
+    params = []
+    if object_id is not None:
+        conditions.append("do.object_id = ?")
+        params.append(object_id)
+    if start_date:
+        conditions.append("date(do.transaction_date) >= ?")
+        params.append(start_date)
+    if end_date:
+        conditions.append("date(do.transaction_date) <= ?")
+        params.append(end_date)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    cursor = await db.execute(
+        f"SELECT do.*, o.name as object_name FROM deleted_operations do LEFT JOIN objects o ON do.object_id = o.id{where} ORDER BY do.deleted_at",
+        params,
+    )
     rows = await cursor.fetchall()
     return [dict(r) for r in rows]
 
