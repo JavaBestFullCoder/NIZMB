@@ -94,14 +94,29 @@ async def add_object_code(message: Message, state: FSMContext):
     if len(code) < 3:
         await message.answer("Код должен быть минимум 3 символа. Попробуйте снова:")
         return
+    await state.update_data(obj_code=code)
+    await state.set_state(AddObject.waiting_for_manager_name)
+    await message.answer(
+        "Введите **имя менеджера** (или отправьте 0, чтобы использовать ник в Telegram):",
+        reply_markup=back_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AddObject.waiting_for_manager_name)
+async def add_object_manager_name(message: Message, state: FSMContext):
+    name_input = message.text.strip()
     data = await state.get_data()
     obj_name = data["obj_name"]
+    code = data["obj_code"]
+    manager_name = None if name_input == "0" else (name_input if len(name_input) >= 2 else None)
     obj_id = await create_object(obj_name)
-    await create_access_code(code, "manager", obj_id)
+    await create_access_code(code, "manager", obj_id, default_name=manager_name)
     await state.clear()
     await message.answer(
         f"✅ Объект «{obj_name}» создан!\n"
-        f"Код менеджера: `{code}`\n\n"
+        f"Код менеджера: `{code}`\n"
+        f"Имя менеджера: {manager_name or 'будет использован ник Telegram'}\n\n"
         f"Сколько угодно человек могут войти по этому коду.",
         parse_mode="Markdown",
         reply_markup=head_office_menu(),
@@ -215,12 +230,27 @@ async def add_employee_code(message: Message, state: FSMContext):
     if len(code) < 3:
         await message.answer("Код должен быть минимум 3 символа. Попробуйте снова:")
         return
+    await state.update_data(emp_code=code)
+    await state.set_state(AddEmployee.waiting_for_emp_name)
+    await message.answer(
+        "Введите **имя сотрудника** (или отправьте 0, чтобы использовать ник в Telegram):",
+        reply_markup=back_keyboard(),
+        parse_mode="Markdown",
+    )
+
+
+@router.message(AddEmployee.waiting_for_emp_name)
+async def add_employee_name(message: Message, state: FSMContext):
+    name_input = message.text.strip()
     data = await state.get_data()
-    await create_access_code(code, "manager", data["emp_obj_id"])
+    code = data["emp_code"]
+    manager_name = None if name_input == "0" else (name_input if len(name_input) >= 2 else None)
+    await create_access_code(code, "manager", data["emp_obj_id"], default_name=manager_name)
     await state.clear()
     await message.answer(
         f"✅ Код менеджера создан для «{data['emp_obj_name']}»\n"
-        f"Код: `{code}`\n\n"
+        f"Код: `{code}`\n"
+        f"Имя: {manager_name or 'будет использован ник Telegram'}\n\n"
         f"Сколько угодно человек могут войти по этому коду.",
         parse_mode="Markdown",
         reply_markup=head_office_menu(),
@@ -524,7 +554,7 @@ async def create_code_final(message: Message, state: FSMContext):
         return
     data = await state.get_data()
     hq_name = data["hq_name"]
-    await create_access_code(code, "head_office", None)
+    await create_access_code(code, "head_office", None, default_name=hq_name)
     await state.clear()
     await message.answer(
         f"✅ Код доступа создан!\n\n"

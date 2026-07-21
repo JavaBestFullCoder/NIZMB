@@ -93,6 +93,15 @@ async def init_db():
         );
     """)
 
+    # Add default_name column if missing (migration)
+    try:
+        cursor = await db.execute("PRAGMA table_info(access_codes)")
+        cols = {row["name"] for row in await cursor.fetchall()}
+        if "default_name" not in cols:
+            await db.execute("ALTER TABLE access_codes ADD COLUMN default_name TEXT")
+    except Exception:
+        pass
+
     await db.execute("""
         CREATE TABLE IF NOT EXISTS deleted_operations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,11 +124,11 @@ async def init_db():
 
 # --- Access codes ---
 
-async def create_access_code(code: str, role: str, object_id: int | None):
+async def create_access_code(code: str, role: str, object_id: int | None, default_name: str | None = None):
     db = await get_db()
     await db.execute(
-        "INSERT OR REPLACE INTO access_codes (code, role, object_id) VALUES (?, ?, ?)",
-        (code, role, object_id),
+        "INSERT OR REPLACE INTO access_codes (code, role, object_id, default_name) VALUES (?, ?, ?, ?)",
+        (code, role, object_id, default_name),
     )
     await db.commit()
 
@@ -169,16 +178,17 @@ async def login_user(telegram_id: int, telegram_username: str | None, code: str,
 
     db = await get_db()
     existing = await get_user_by_telegram(telegram_id)
+    user_name = ac.get("default_name") or first_name
 
     if existing:
         await db.execute(
-            "UPDATE users SET role = ?, object_id = ?, access_code = ? WHERE telegram_id = ?",
-            (ac["role"], ac["object_id"], code, telegram_id),
+            "UPDATE users SET role = ?, object_id = ?, access_code = ?, name = ? WHERE telegram_id = ?",
+            (ac["role"], ac["object_id"], code, user_name, telegram_id),
         )
     else:
         await db.execute(
             "INSERT INTO users (telegram_id, telegram_username, name, role, access_code, object_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (telegram_id, telegram_username, first_name, ac["role"], code, ac["object_id"]),
+            (telegram_id, telegram_username, user_name, ac["role"], code, ac["object_id"]),
         )
     await db.commit()
     return await get_user_by_telegram(telegram_id)

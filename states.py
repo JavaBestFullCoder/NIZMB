@@ -6,10 +6,12 @@ class Registration(StatesGroup):
 class AddObject(StatesGroup):
     waiting_for_name = State()
     waiting_for_code = State()
+    waiting_for_manager_name = State()
 
 class AddEmployee(StatesGroup):
     waiting_for_name = State()
     waiting_for_code = State()
+    waiting_for_emp_name = State()
 
 class AddIncome(StatesGroup):
     waiting_for_amount = State()
