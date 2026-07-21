@@ -548,48 +548,9 @@ async def cancel_action(callback: CallbackQuery, state: FSMContext):
 
 @router.message(F.text == "🗑 Удалить операцию")
 async def delete_operation_start(message: Message, state: FSMContext):
-    kb = await delete_object_inline()
-    await message.answer(
-        "🗑 **Удаление операции**\n\nВыберите **объект**, в котором была операция:",
-        reply_markup=kb,
-        parse_mode="Markdown",
-    )
-
-
-@router.callback_query(F.data.startswith("delop_obj_"))
-async def delete_operation_object(callback: CallbackQuery, state: FSMContext):
-    obj_id = int(callback.data.split("_")[2])
-    if obj_id == 0:
-        await state.update_data(delop_obj_id=0, delop_obj_name="Головной офис")
-        await state.set_state(DeleteOperation.waiting_for_date)
-        await callback.message.edit_text(
-            "🗑 Удаление операции\nОбъект: **Головной офис**\n\n"
-            "Введите **дату** операции (ДД.ММ.ГГГГ):",
-            parse_mode="Markdown",
-        )
-        return
-    obj = await get_object(obj_id)
-    if not obj:
-        await callback.answer("Объект не найден", show_alert=True)
-        return
-    await state.update_data(delop_obj_id=obj_id, delop_obj_name=obj["name"])
-    await state.set_state(DeleteOperation.waiting_for_date)
-    await callback.message.edit_text(
-        f"🗑 Удаление операции\nОбъект: «{obj['name']}»\n\n"
-        f"Введите **дату** операции (ДД.ММ.ГГГГ):",
-        parse_mode="Markdown",
-    )
-
-
-@router.message(DeleteOperation.waiting_for_date)
-async def delete_operation_date(message: Message, state: FSMContext):
-    date = parse_date(message.text)
-    if date is None:
-        await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ:")
-        return
-    await state.update_data(delop_date=date.strftime("%Y-%m-%d"))
     await state.set_state(DeleteOperation.waiting_for_id)
     await message.answer(
+        "🗑 **Удаление операции**\n\n"
         "Введите **ID операции** для удаления:",
         reply_markup=cancel_keyboard(),
         parse_mode="Markdown",
